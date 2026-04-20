@@ -9,3 +9,10 @@ export const EXPENSE_CATEGORIES: Category[] = [
   "Educação",
   "Outros",
 ];
+
+export const INCOME_CATEGORIES: Category[] = [
+  "Salário",
+  "Freelance",
+  "Investimentos",
+  "Outros",
+];

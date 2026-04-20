@@ -5,6 +5,9 @@ export type Category =
   | "Saúde"
   | "Lazer"
   | "Educação"
+  | "Salário"
+  | "Freelance"
+  | "Investimentos"
   | "Outros";
 
 export interface Month {
@@ -20,6 +23,7 @@ export interface Income {
   id: string;
   description: string;
   amount: number;
+  category?: Category | null;
   month_id: string;
   user_id: string;
   created_at?: string;
