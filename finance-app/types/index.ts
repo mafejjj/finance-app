@@ -1,14 +1,6 @@
-export type Category =
-  | "Moradia"
-  | "Alimentação"
-  | "Transporte"
-  | "Saúde"
-  | "Lazer"
-  | "Educação"
-  | "Salário"
-  | "Freelance"
-  | "Investimentos"
-  | "Outros";
+export type Category = string;
+
+export type CategoryType = "income" | "expense";
 
 export interface Month {
   id: string;

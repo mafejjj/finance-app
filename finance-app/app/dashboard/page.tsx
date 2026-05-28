@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { CenterModal } from "@/components/center-modal";
 import { supabase } from "@/lib/supabase";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/constants";
-import { Expense, Income, Month, RecurringEntry } from "@/types";
+import { CategoryType, Expense, Income, Month, RecurringEntry } from "@/types";
 import {
   BarChart,
   Bar,
@@ -24,6 +25,21 @@ type Profile = {
   id: string;
   full_name: string | null;
   email: string | null;
+};
+
+type CategoryRow = {
+  id: string;
+  name: string;
+  type: CategoryType;
+};
+
+type ModalState = {
+  title: string;
+  message: string;
+  intent?: "info" | "success" | "warning" | "error";
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm?: () => void | Promise<void>;
 };
 
 export default function Dashboard() {
@@ -57,6 +73,24 @@ export default function Dashboard() {
   const [recurringDescription, setRecurringDescription] = useState("");
   const [recurringAmount, setRecurringAmount] = useState("");
   const [recurringCategory, setRecurringCategory] = useState("Moradia");
+
+  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [categoryName, setCategoryName] = useState("");
+  const [categoryType, setCategoryType] = useState<CategoryType>("income");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [fixedIncomeCategories, setFixedIncomeCategories] = useState(
+    INCOME_CATEGORIES
+  );
+  const [fixedExpenseCategories, setFixedExpenseCategories] = useState(
+    EXPENSE_CATEGORIES
+  );
+  const [removedFixedIncomeCategories, setRemovedFixedIncomeCategories] = useState<
+    string[]
+  >([]);
+  const [removedFixedExpenseCategories, setRemovedFixedExpenseCategories] = useState<
+    string[]
+  >([]);
+  const [modal, setModal] = useState<ModalState | null>(null);
 
   const [monthsYearFilter, setMonthsYearFilter] = useState("");
 
@@ -116,6 +150,18 @@ export default function Dashboard() {
       if (recurringData) {
         setRecurringEntries(recurringData);
       }
+
+      const { data: categoriesData } = await supabase
+        .from("categories")
+        .select("id, name, type")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (categoriesData) {
+        setCategories(categoriesData as CategoryRow[]);
+      }
+
+      await refreshCategoryOverrides(user.id);
 
       setLoading(false);
     }
@@ -184,6 +230,121 @@ export default function Dashboard() {
     if (data) setRecurringEntries(data);
   }
 
+  async function refreshCategories() {
+    if (!userId) return;
+
+    const { data } = await supabase
+      .from("categories")
+      .select("id, name, type")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (data) setCategories(data as CategoryRow[]);
+  }
+
+  function applyFixedExpenseOverrides(removed: string[]) {
+    setRemovedFixedExpenseCategories(removed);
+
+    const filtered = EXPENSE_CATEGORIES.filter(
+      (category) => !removed.includes(category)
+    );
+
+    setFixedExpenseCategories(filtered);
+
+    if (!filtered.includes(expenseCategory)) {
+      setExpenseCategory(filtered[0] || "Outros");
+    }
+
+    if (!filtered.includes(recurringCategory)) {
+      setRecurringCategory(filtered[0] || "Outros");
+    }
+  }
+
+  function applyFixedIncomeOverrides(removed: string[]) {
+    setRemovedFixedIncomeCategories(removed);
+
+    const filtered = INCOME_CATEGORIES.filter(
+      (category) => !removed.includes(category)
+    );
+
+    setFixedIncomeCategories(filtered);
+
+    if (!filtered.includes(incomeCategory)) {
+      setIncomeCategory(filtered[0] || "Outros");
+    }
+  }
+
+  async function refreshCategoryOverrides(userIdOverride?: string) {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("category_overrides")
+      .select("name, type")
+      .eq("user_id", targetUserId)
+      .eq("action", "remove")
+      .order("created_at", { ascending: false });
+
+    if (!data) return;
+
+    const removedExpense = data
+      .filter((item) => item.type === "expense")
+      .map((item) => item.name)
+      .filter(Boolean);
+
+    const removedIncome = data
+      .filter((item) => item.type === "income")
+      .map((item) => item.name)
+      .filter(Boolean);
+
+    applyFixedExpenseOverrides(removedExpense);
+    applyFixedIncomeOverrides(removedIncome);
+  }
+
+  function openModal(state: ModalState) {
+    setModal(state);
+  }
+
+  function openAlert(message: string, intent: ModalState["intent"] = "info") {
+    const titleMap: Record<string, string> = {
+      info: "Atenção",
+      success: "Pronto",
+      warning: "Atenção",
+      error: "Erro",
+    };
+
+    openModal({
+      title: titleMap[intent || "info"],
+      message,
+      intent,
+      confirmLabel: "Ok",
+    });
+  }
+
+  function openConfirm(options: {
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    onConfirm: () => void | Promise<void>;
+  }) {
+    openModal({
+      title: options.title,
+      message: options.message,
+      intent: "warning",
+      confirmLabel: options.confirmLabel || "Confirmar",
+      cancelLabel: "Cancelar",
+      onConfirm: options.onConfirm,
+    });
+  }
+
+  async function handleModalConfirm() {
+    if (modal?.onConfirm) {
+      await modal.onConfirm();
+    }
+    setModal(null);
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.href = "/login";
@@ -197,18 +358,18 @@ export default function Dashboard() {
     });
 
     if (error) {
-      alert("Erro ao enviar email de redefinição.");
+      openAlert("Erro ao enviar email de redefinição.", "error");
       return;
     }
 
-    alert("Email de redefinição enviado.");
+    openAlert("Email de redefinição enviado.", "success");
   }
 
   async function handleCreateMonth(e: React.FormEvent) {
     e.preventDefault();
 
     if (!monthName || !monthNumber || !year) {
-      alert("Preencha nome, mês e ano.");
+      openAlert("Preencha nome, mês e ano.", "warning");
       return;
     }
 
@@ -220,7 +381,7 @@ export default function Dashboard() {
     });
 
     if (error) {
-      alert("Erro ao criar mês.");
+      openAlert("Erro ao criar mês.", "error");
       return;
     }
 
@@ -235,7 +396,7 @@ export default function Dashboard() {
     const { error } = await supabase.from("months").delete().eq("id", id);
 
     if (error) {
-      alert("Erro ao deletar mês.");
+      openAlert("Erro ao deletar mês.", "error");
       return;
     }
 
@@ -246,12 +407,12 @@ export default function Dashboard() {
     e.preventDefault();
 
     if (!selectedMonthId) {
-      alert("Selecione um mês.");
+      openAlert("Selecione um mês.", "warning");
       return;
     }
 
     if (!incomeDescription || !incomeAmount) {
-      alert("Preencha descrição e valor da receita.");
+      openAlert("Preencha descrição e valor da receita.", "warning");
       return;
     }
 
@@ -264,7 +425,7 @@ export default function Dashboard() {
     });
 
     if (error) {
-      alert("Erro ao adicionar receita.");
+      openAlert("Erro ao adicionar receita.", "error");
       return;
     }
 
@@ -279,7 +440,7 @@ export default function Dashboard() {
     const { error } = await supabase.from("incomes").delete().eq("id", id);
 
     if (error) {
-      alert("Erro ao deletar receita.");
+      openAlert("Erro ao deletar receita.", "error");
       return;
     }
 
@@ -290,12 +451,12 @@ export default function Dashboard() {
     e.preventDefault();
 
     if (!selectedMonthId) {
-      alert("Selecione um mês.");
+      openAlert("Selecione um mês.", "warning");
       return;
     }
 
     if (!expenseDescription || !expenseAmount || !expenseCategory) {
-      alert("Preencha descrição, valor e categoria da despesa.");
+      openAlert("Preencha descrição, valor e categoria da despesa.", "warning");
       return;
     }
 
@@ -308,7 +469,7 @@ export default function Dashboard() {
     });
 
     if (error) {
-      alert("Erro ao adicionar despesa.");
+      openAlert("Erro ao adicionar despesa.", "error");
       return;
     }
 
@@ -323,7 +484,7 @@ export default function Dashboard() {
     const { error } = await supabase.from("expenses").delete().eq("id", id);
 
     if (error) {
-      alert("Erro ao deletar despesa.");
+      openAlert("Erro ao deletar despesa.", "error");
       return;
     }
 
@@ -334,7 +495,7 @@ export default function Dashboard() {
     e.preventDefault();
 
     if (!recurringDescription || !recurringAmount) {
-      alert("Preencha descrição e valor.");
+      openAlert("Preencha descrição e valor.", "warning");
       return;
     }
 
@@ -347,7 +508,7 @@ export default function Dashboard() {
     });
 
     if (error) {
-      alert("Erro ao adicionar receita recorrente.");
+      openAlert("Erro ao adicionar receita recorrente.", "error");
       return;
     }
 
@@ -362,7 +523,7 @@ export default function Dashboard() {
     e.preventDefault();
 
     if (!recurringDescription || !recurringAmount) {
-      alert("Preencha descrição e valor.");
+      openAlert("Preencha descrição e valor.", "warning");
       return;
     }
 
@@ -375,7 +536,7 @@ export default function Dashboard() {
     });
 
     if (error) {
-      alert("Erro ao adicionar despesa recorrente.");
+      openAlert("Erro ao adicionar despesa recorrente.", "error");
       return;
     }
 
@@ -393,7 +554,7 @@ export default function Dashboard() {
       .eq("id", id);
 
     if (error) {
-      alert("Erro ao deletar recorrente.");
+      openAlert("Erro ao deletar recorrente.", "error");
       return;
     }
 
@@ -402,7 +563,7 @@ export default function Dashboard() {
 
   async function handleApplyRecurringToMonth(entry: RecurringEntry) {
     if (!selectedMonthId) {
-      alert("Selecione um mês para adicionar o recorrente.");
+      openAlert("Selecione um mês para adicionar o recorrente.", "warning");
       return;
     }
 
@@ -416,7 +577,7 @@ export default function Dashboard() {
       });
 
       if (error) {
-        alert("Erro ao adicionar receita recorrente ao mês.");
+        openAlert("Erro ao adicionar receita recorrente ao mês.", "error");
         return;
       }
     } else {
@@ -429,13 +590,164 @@ export default function Dashboard() {
       });
 
       if (error) {
-        alert("Erro ao adicionar despesa recorrente ao mês.");
+        openAlert("Erro ao adicionar despesa recorrente ao mês.", "error");
         return;
       }
     }
 
     await refreshEntries(selectedMonthId);
   }
+
+  async function handleSaveCategory(e: React.FormEvent) {
+    e.preventDefault();
+
+    const trimmedName = categoryName.trim();
+
+    if (!trimmedName) {
+      openAlert("Informe o nome da categoria.", "warning");
+      return;
+    }
+
+    if (!userId) {
+      openAlert("Usuário não encontrado.", "error");
+      return;
+    }
+
+    if (editingCategoryId) {
+      const { error } = await supabase
+        .from("categories")
+        .update({ name: trimmedName, type: categoryType })
+        .eq("id", editingCategoryId)
+        .eq("user_id", userId);
+
+      if (error) {
+        openAlert("Erro ao atualizar categoria.", "error");
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("categories").insert({
+        user_id: userId,
+        name: trimmedName,
+        type: categoryType,
+      });
+
+      if (error) {
+        openAlert("Erro ao adicionar categoria.", "error");
+        return;
+      }
+    }
+
+    setCategoryName("");
+    setCategoryType("income");
+    setEditingCategoryId(null);
+
+    await refreshCategories();
+  }
+
+  function handleEditCategory(category: CategoryRow) {
+    setCategoryName(category.name);
+    setCategoryType(category.type);
+    setEditingCategoryId(category.id);
+  }
+
+  function handleDeleteCategory(categoryId: string) {
+    openConfirm({
+      title: "Deletar categoria",
+      message: "Deseja deletar esta categoria?",
+      confirmLabel: "Deletar",
+      onConfirm: async () => {
+        if (!userId) {
+          openAlert("Usuário não encontrado.", "error");
+          return;
+        }
+
+        const { error } = await supabase
+          .from("categories")
+          .delete()
+          .eq("id", categoryId)
+          .eq("user_id", userId);
+
+        if (error) {
+          openAlert("Erro ao deletar categoria.", "error");
+          return;
+        }
+
+        await refreshCategories();
+      },
+    });
+  }
+
+  async function removeFixedExpenseCategory(name: string) {
+    if (!userId) {
+      openAlert("Usuário não encontrado.", "error");
+      return;
+    }
+
+    if (removedFixedExpenseCategories.includes(name)) return;
+
+    const { error } = await supabase.from("category_overrides").insert({
+      user_id: userId,
+      name,
+      type: "expense",
+      action: "remove",
+    });
+
+    if (error) {
+      openAlert("Erro ao remover categoria fixa.", "error");
+      return;
+    }
+
+    await refreshCategoryOverrides();
+  }
+
+  async function removeFixedIncomeCategory(name: string) {
+    if (!userId) {
+      openAlert("Usuário não encontrado.", "error");
+      return;
+    }
+
+    if (removedFixedIncomeCategories.includes(name)) return;
+
+    const { error } = await supabase.from("category_overrides").insert({
+      user_id: userId,
+      name,
+      type: "income",
+      action: "remove",
+    });
+
+    if (error) {
+      openAlert("Erro ao remover categoria fixa.", "error");
+      return;
+    }
+
+    await refreshCategoryOverrides();
+  }
+
+  const customIncomeCategories = useMemo(
+    () => categories.filter((item) => item.type === "income"),
+    [categories]
+  );
+
+  const customExpenseCategories = useMemo(
+    () => categories.filter((item) => item.type === "expense"),
+    [categories]
+  );
+
+  const incomeCategories = useMemo(() => {
+    const all = [
+      ...fixedIncomeCategories,
+      ...customIncomeCategories.map((item) => item.name),
+    ];
+    return Array.from(new Set(all));
+  }, [customIncomeCategories, fixedIncomeCategories]);
+
+  const expenseCategories = useMemo(() => {
+    const all = [
+      ...fixedExpenseCategories,
+      ...customExpenseCategories.map((item) => item.name),
+    ];
+    return Array.from(new Set(all));
+  }, [customExpenseCategories, fixedExpenseCategories]);
 
   const recurringIncomes = useMemo(
     () => recurringEntries.filter((item) => item.type === "income"),
@@ -622,7 +934,7 @@ export default function Dashboard() {
                 value={incomeCategory}
                 onChange={(e) => setIncomeCategory(e.target.value)}
               >
-                {INCOME_CATEGORIES.map((category) => (
+                {incomeCategories.map((category) => (
                   <option key={category} value={category}>
                     {category}
                   </option>
@@ -664,7 +976,7 @@ export default function Dashboard() {
                 value={expenseCategory}
                 onChange={(e) => setExpenseCategory(e.target.value)}
               >
-                {EXPENSE_CATEGORIES.map((category) => (
+                {expenseCategories.map((category) => (
                   <option key={category} value={category}>
                     {category}
                   </option>
@@ -964,7 +1276,7 @@ export default function Dashboard() {
                 value={incomeCategory}
                 onChange={(e) => setIncomeCategory(e.target.value)}
               >
-                {INCOME_CATEGORIES.map((category) => (
+                {incomeCategories.map((category) => (
                   <option key={category} value={category}>
                     {category}
                   </option>
@@ -1006,7 +1318,7 @@ export default function Dashboard() {
                 value={expenseCategory}
                 onChange={(e) => setExpenseCategory(e.target.value)}
               >
-                {EXPENSE_CATEGORIES.map((category) => (
+                {expenseCategories.map((category) => (
                   <option key={category} value={category}>
                     {category}
                   </option>
@@ -1055,7 +1367,7 @@ export default function Dashboard() {
               value={recurringCategory}
               onChange={(e) => setRecurringCategory(e.target.value)}
             >
-              {INCOME_CATEGORIES.map((category) => (
+              {incomeCategories.map((category) => (
                 <option key={category} value={category}>
                   {category}
                 </option>
@@ -1143,7 +1455,7 @@ export default function Dashboard() {
               value={recurringCategory}
               onChange={(e) => setRecurringCategory(e.target.value)}
             >
-              {EXPENSE_CATEGORIES.map((category) => (
+              {expenseCategories.map((category) => (
                 <option key={category} value={category}>
                   {category}
                 </option>
@@ -1196,6 +1508,192 @@ export default function Dashboard() {
                 </div>
               ))
             )}
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  function renderCategoriesView() {
+    return (
+      <div className="grid gap-6">
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <h2 className="mb-4 text-xl font-semibold">
+            {editingCategoryId ? "Editar categoria" : "Nova categoria"}
+          </h2>
+
+          <form onSubmit={handleSaveCategory} className="grid gap-4 md:grid-cols-3">
+            <input
+              type="text"
+              placeholder="Nome da categoria"
+              className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
+              value={categoryName}
+              onChange={(e) => setCategoryName(e.target.value)}
+            />
+
+            <select
+              className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
+              value={categoryType}
+              onChange={(e) => setCategoryType(e.target.value as CategoryType)}
+            >
+              <option value="income">Receita</option>
+              <option value="expense">Despesa</option>
+            </select>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                className="rounded-xl bg-white px-4 py-3 font-medium text-slate-900"
+              >
+                {editingCategoryId ? "Salvar" : "Adicionar"}
+              </button>
+
+              {editingCategoryId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCategoryName("");
+                    setCategoryType("income");
+                    setEditingCategoryId(null);
+                  }}
+                  className="rounded-xl border border-slate-700 px-4 py-3 font-medium text-slate-200"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <h3 className="mb-4 text-lg font-semibold">Categorias de receita</h3>
+
+            <div className="mb-6">
+              <p className="mb-2 text-sm text-slate-400">Fixas</p>
+              <div className="flex flex-wrap gap-2">
+                {fixedIncomeCategories.map((category) => (
+                  <span
+                    key={category}
+                    className="group relative rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-200"
+                  >
+                    {category}
+                    <button
+                      type="button"
+                      aria-label={`Deletar ${category}`}
+                      onClick={() =>
+                        openConfirm({
+                          title: "Remover categoria fixa de receita",
+                          message: `Tem certeza que deseja remover "${category}"?`,
+                          confirmLabel: "Remover",
+                          onConfirm: () => removeFixedIncomeCategory(category),
+                        })
+                      }
+                      className="absolute -right-2 -top-2 hidden h-5 w-5 items-center justify-center rounded-full border border-slate-600 bg-slate-950 text-xs text-slate-300 group-hover:flex"
+                    >
+                      X
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm text-slate-400">Personalizadas</p>
+              {customIncomeCategories.length === 0 ? (
+                <p className="text-sm text-slate-500">Nenhuma categoria criada.</p>
+              ) : (
+                <div className="grid gap-2">
+                  {customIncomeCategories.map((category) => (
+                    <div
+                      key={category.id}
+                      className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-4 py-2"
+                    >
+                      <span>{category.name}</span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleEditCategory(category)}
+                          className="rounded-lg border border-slate-600 px-3 py-1 text-xs text-slate-200"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCategory(category.id)}
+                          className="rounded-lg border border-rose-500 px-3 py-1 text-xs text-rose-400"
+                        >
+                          Deletar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <h3 className="mb-4 text-lg font-semibold">Categorias de despesa</h3>
+
+            <div className="mb-6">
+              <p className="mb-2 text-sm text-slate-400">Fixas</p>
+              <div className="flex flex-wrap gap-2">
+                {fixedExpenseCategories.map((category) => (
+                  <span
+                    key={category}
+                    className="group relative rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-200"
+                  >
+                    {category}
+                    <button
+                      type="button"
+                      aria-label={`Deletar ${category}`}
+                      onClick={() =>
+                        openConfirm({
+                          title: "Remover categoria fixa de despesa",
+                          message: `Tem certeza que deseja remover "${category}"?`,
+                          confirmLabel: "Remover",
+                          onConfirm: () => removeFixedExpenseCategory(category),
+                        })
+                      }
+                      className="absolute -right-2 -top-2 hidden h-5 w-5 items-center justify-center rounded-full border border-slate-600 bg-slate-950 text-xs text-slate-300 group-hover:flex"
+                    >
+                      X
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm text-slate-400">Personalizadas</p>
+              {customExpenseCategories.length === 0 ? (
+                <p className="text-sm text-slate-500">Nenhuma categoria criada.</p>
+              ) : (
+                <div className="grid gap-2">
+                  {customExpenseCategories.map((category) => (
+                    <div
+                      key={category.id}
+                      className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-4 py-2"
+                    >
+                      <span>{category.name}</span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleEditCategory(category)}
+                          className="rounded-lg border border-slate-600 px-3 py-1 text-xs text-slate-200"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCategory(category.id)}
+                          className="rounded-lg border border-rose-500 px-3 py-1 text-xs text-rose-400"
+                        >
+                          Deletar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </section>
       </div>
@@ -1277,13 +1775,27 @@ export default function Dashboard() {
   }
 
   return (
-    <AppShell title="Dashboard">
-      {currentView === "account" && renderAccountView()}
-      {currentView === "create-month" && renderCreateMonthView()}
-      {currentView === "dashboard" && renderDashboardHome()}
-      {currentView === "recurring-incomes" && renderRecurringIncomesView()}
-      {currentView === "recurring-expenses" && renderRecurringExpensesView()}
-      {currentView === "months" && renderMonthsView()}
-    </AppShell>
+    <>
+      <AppShell title="Dashboard">
+        {currentView === "account" && renderAccountView()}
+        {currentView === "categories" && renderCategoriesView()}
+        {currentView === "create-month" && renderCreateMonthView()}
+        {currentView === "dashboard" && renderDashboardHome()}
+        {currentView === "recurring-incomes" && renderRecurringIncomesView()}
+        {currentView === "recurring-expenses" && renderRecurringExpensesView()}
+        {currentView === "months" && renderMonthsView()}
+      </AppShell>
+
+      <CenterModal
+        open={Boolean(modal)}
+        title={modal?.title || ""}
+        message={modal?.message || ""}
+        intent={modal?.intent}
+        confirmLabel={modal?.confirmLabel}
+        cancelLabel={modal?.cancelLabel}
+        onConfirm={handleModalConfirm}
+        onClose={() => setModal(null)}
+      />
+    </>
   );
 }
