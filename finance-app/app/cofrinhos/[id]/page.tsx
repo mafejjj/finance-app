@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CenterModal } from "@/components/center-modal";
+import { usePreferences } from "@/components/preferences-provider";
+import { formatCurrency } from "@/lib/formatters";
 import { supabase } from "@/lib/supabase";
 
 type SavingsGoal = {
@@ -33,6 +35,9 @@ type ModalState = {
 };
 
 export default function CofrinhoDetailPage() {
+  const { preferences } = usePreferences();
+  const hideValues = preferences.hideValues;
+
   const params = useParams();
   const goalId = Array.isArray(params.id) ? params.id[0] : params.id;
 
@@ -298,14 +303,14 @@ export default function CofrinhoDetailPage() {
               <div>
                 <h2 className="text-2xl font-semibold text-white">{goal.name}</h2>
                 <p className="mt-1 text-sm text-slate-400">
-                  Meta: {goal.target_amount ? `R$ ${goal.target_amount.toFixed(2)}` : "Nao definida"}
+                  Meta: {goal.target_amount ? formatCurrency(goal.target_amount, hideValues) : "Nao definida"}
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
                 <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2">
                   <p className="text-xs text-slate-400">Total bruto</p>
                   <p className="text-sm font-semibold text-emerald-400">
-                    R$ {totals.balance.toFixed(2)}
+                    {formatCurrency(totals.balance, hideValues)}
                   </p>
                 </div>
                 <button
@@ -390,7 +395,7 @@ export default function CofrinhoDetailPage() {
                           {entry.month}/{entry.year}
                         </p>
                         <p className="text-xs text-slate-400">
-                          Guardou: R$ {entry.saved_amount.toFixed(2)}
+                          Guardou: {formatCurrency(entry.saved_amount, hideValues)}
                         </p>
                       </div>
                       <button
@@ -425,7 +430,7 @@ export default function CofrinhoDetailPage() {
                           {entry.month}/{entry.year}
                         </p>
                         <p className="text-xs text-slate-400">
-                          Retirou: R$ {entry.withdrawn_amount.toFixed(2)}
+                          Retirou: {formatCurrency(entry.withdrawn_amount, hideValues)}
                         </p>
                       </div>
                       <button

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CenterModal } from "@/components/center-modal";
+import { usePreferences } from "@/components/preferences-provider";
+import { formatCurrency } from "@/lib/formatters";
 import { supabase } from "@/lib/supabase";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/constants";
 import { CategoryType, Expense, Income, Month, RecurringEntry } from "@/types";
@@ -11,14 +13,15 @@ import {
   BarChart,
   Bar,
   CartesianGrid,
-  PieChart,
-  Pie,
   Cell,
   Tooltip,
   XAxis,
   YAxis,
   ResponsiveContainer,
   Legend,
+  LabelList,
+  PieChart,
+  Pie
 } from "recharts";
 
 type Profile = {
@@ -44,15 +47,19 @@ type ModalState = {
 
 export default function Dashboard() {
   const searchParams = useSearchParams();
-  const currentView = searchParams.get("view") || "dashboard";
+  const currentView = searchParams.get("view") || "home";
 
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
   const [userId, setUserId] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileName, setProfileName] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
 
   const [months, setMonths] = useState<Month[]>([]);
   const [selectedMonthId, setSelectedMonthId] = useState("");
+  const [comparisonMonthId, setComparisonMonthId] = useState("");
+  const [categoryMonthFilterId, setCategoryMonthFilterId] = useState("");
 
   const [monthName, setMonthName] = useState("");
   const [monthNumber, setMonthNumber] = useState("");
@@ -60,6 +67,21 @@ export default function Dashboard() {
 
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [allIncomes, setAllIncomes] = useState<Income[]>([]);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
+  const [savingsGoalsCount, setSavingsGoalsCount] = useState(0);
+  const [savingsGoals, setSavingsGoals] = useState<
+    Array<{ id: string; name: string; target_amount: number | null }>
+  >([]);
+  const [savingsEntries, setSavingsEntries] = useState<
+    Array<{
+      id: string;
+      goal_id: string;
+      saved_amount: number;
+      withdrawn_amount: number;
+      earned_amount: number;
+    }>
+  >([]);
 
   const [incomeDescription, setIncomeDescription] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
@@ -68,6 +90,8 @@ export default function Dashboard() {
   const [expenseDescription, setExpenseDescription] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState("Moradia");
+  const [expenseDueDate, setExpenseDueDate] = useState("");
+  const [expensePaymentMethod, setExpensePaymentMethod] = useState("PIX");
 
   const [recurringEntries, setRecurringEntries] = useState<RecurringEntry[]>([]);
   const [recurringDescription, setRecurringDescription] = useState("");
@@ -92,6 +116,8 @@ export default function Dashboard() {
   >([]);
   const [modal, setModal] = useState<ModalState | null>(null);
 
+  const { preferences, updatePreferences } = usePreferences();
+
   const [monthsYearFilter, setMonthsYearFilter] = useState("");
 
   const chartColors = [
@@ -102,6 +128,14 @@ export default function Dashboard() {
     "#a78bfa",
     "#fb7185",
     "#94a3b8",
+  ];
+
+  const paymentMethods = [
+    "Cartao de credito",
+    "PIX",
+    "Dinheiro",
+    "Debito",
+    "Outros",
   ];
 
   useEffect(() => {
@@ -126,6 +160,7 @@ export default function Dashboard() {
 
       if (profileData) {
         setProfile(profileData);
+        setProfileName(profileData.full_name || "");
       }
 
       const { data: monthsData } = await supabase
@@ -138,7 +173,16 @@ export default function Dashboard() {
         setMonths(monthsData);
 
         if (monthsData.length > 0) {
-          setSelectedMonthId(monthsData[0].id);
+          const now = new Date();
+          const currentMonth = now.getMonth() + 1;
+          const currentYear = now.getFullYear();
+          const currentMonthEntry = monthsData.find(
+            (item) => item.month === currentMonth && item.year === currentYear
+          );
+          const nextSelected = currentMonthEntry?.id || monthsData[0].id;
+
+          setSelectedMonthId(nextSelected);
+          setComparisonMonthId(nextSelected);
         }
       }
 
@@ -162,6 +206,10 @@ export default function Dashboard() {
       }
 
       await refreshCategoryOverrides(user.id);
+      await refreshAllEntries(user.id);
+      await refreshSavingsGoalsCount(user.id);
+      await refreshSavingsGoals(user.id);
+      await refreshSavingsEntries(user.id);
 
       setLoading(false);
     }
@@ -196,6 +244,77 @@ export default function Dashboard() {
     if (expensesData) setExpenses(expensesData);
   }
 
+  async function refreshAllEntries(userIdOverride?: string) {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data: incomesData } = await supabase
+      .from("incomes")
+      .select("*")
+      .eq("user_id", targetUserId)
+      .order("created_at", { ascending: false });
+
+    const { data: expensesData } = await supabase
+      .from("expenses")
+      .select("*")
+      .eq("user_id", targetUserId)
+      .order("created_at", { ascending: false });
+
+    if (incomesData) setAllIncomes(incomesData);
+    if (expensesData) setAllExpenses(expensesData);
+  }
+
+  async function refreshSavingsGoalsCount(userIdOverride?: string) {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { count } = await supabase
+      .from("savings_goals")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", targetUserId);
+
+    setSavingsGoalsCount(count || 0);
+  }
+
+  async function refreshSavingsGoals(userIdOverride?: string) {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("savings_goals")
+      .select("id, name, target_amount")
+      .eq("user_id", targetUserId)
+      .order("created_at", { ascending: false });
+
+    if (data) setSavingsGoals(data as Array<{ id: string; name: string; target_amount: number | null }>);
+  }
+
+  async function refreshSavingsEntries(userIdOverride?: string) {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("savings_entries")
+      .select("id, goal_id, saved_amount, withdrawn_amount, earned_amount")
+      .eq("user_id", targetUserId)
+      .order("created_at", { ascending: false });
+
+    if (data)
+      setSavingsEntries(
+        data as Array<{
+          id: string;
+          goal_id: string;
+          saved_amount: number;
+          withdrawn_amount: number;
+          earned_amount: number;
+        }>
+      );
+  }
+
   async function refreshMonths() {
     const { data } = await supabase
       .from("months")
@@ -208,6 +327,7 @@ export default function Dashboard() {
 
       if (data.length === 0) {
         setSelectedMonthId("");
+        setComparisonMonthId("");
         setIncomes([]);
         setExpenses([]);
         return;
@@ -215,8 +335,15 @@ export default function Dashboard() {
 
       const stillExists = data.some((item) => item.id === selectedMonthId);
 
+      const nextSelected = stillExists ? selectedMonthId : data[0].id;
+      const comparisonExists = data.some((item) => item.id === comparisonMonthId);
+
       if (!stillExists) {
-        setSelectedMonthId(data[0].id);
+        setSelectedMonthId(nextSelected);
+      }
+
+      if (!comparisonExists) {
+        setComparisonMonthId(nextSelected);
       }
     }
   }
@@ -365,6 +492,41 @@ export default function Dashboard() {
     openAlert("Email de redefinição enviado.", "success");
   }
 
+  async function handleSaveProfile() {
+    if (!userId) {
+      openAlert("Usuário não encontrado.", "error");
+      return;
+    }
+
+    setProfileSaving(true);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ full_name: profileName.trim() })
+      .eq("id", userId);
+
+    setProfileSaving(false);
+
+    if (error) {
+      openAlert("Erro ao atualizar perfil.", "error");
+      return;
+    }
+
+    setProfile((prev) =>
+      prev ? { ...prev, full_name: profileName.trim() } : prev
+    );
+    openAlert("Perfil atualizado.", "success");
+  }
+
+  function getInitials(name?: string | null, fallbackEmail?: string | null) {
+    const source = (name || fallbackEmail || "").trim();
+    if (!source) return "U";
+
+    const parts = source.split(/\s+/).filter(Boolean);
+    const initials = parts.length === 1 ? parts[0][0] : parts[0][0] + parts[1][0];
+    return initials.toUpperCase();
+  }
+
   async function handleCreateMonth(e: React.FormEvent) {
     e.preventDefault();
 
@@ -390,6 +552,7 @@ export default function Dashboard() {
     setYear("");
 
     await refreshMonths();
+    await refreshAllEntries();
   }
 
   async function handleDeleteMonth(id: string) {
@@ -401,6 +564,7 @@ export default function Dashboard() {
     }
 
     await refreshMonths();
+    await refreshAllEntries();
   }
 
   async function handleCreateIncome(e: React.FormEvent) {
@@ -434,6 +598,7 @@ export default function Dashboard() {
     setIncomeCategory("Salário");
 
     await refreshEntries(selectedMonthId);
+    await refreshAllEntries();
   }
 
   async function handleDeleteIncome(id: string) {
@@ -445,6 +610,7 @@ export default function Dashboard() {
     }
 
     await refreshEntries(selectedMonthId);
+    await refreshAllEntries();
   }
 
   async function handleCreateExpense(e: React.FormEvent) {
@@ -478,6 +644,7 @@ export default function Dashboard() {
     setExpenseCategory("Moradia");
 
     await refreshEntries(selectedMonthId);
+    await refreshAllEntries();
   }
 
   async function handleDeleteExpense(id: string) {
@@ -489,6 +656,7 @@ export default function Dashboard() {
     }
 
     await refreshEntries(selectedMonthId);
+    await refreshAllEntries();
   }
 
   async function handleCreateRecurringIncome(e: React.FormEvent) {
@@ -596,6 +764,7 @@ export default function Dashboard() {
     }
 
     await refreshEntries(selectedMonthId);
+    await refreshAllEntries();
   }
 
   async function handleSaveCategory(e: React.FormEvent) {
@@ -771,18 +940,57 @@ export default function Dashboard() {
 
   const balance = totalIncomes - totalExpenses;
 
-  const categoryChartData = useMemo(() => {
+  const currentMonthCategoryData = useMemo(() => {
     const grouped: Record<string, number> = {};
 
     expenses.forEach((item) => {
       grouped[item.category] = (grouped[item.category] || 0) + Number(item.amount);
     });
+    const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
 
-    return Object.entries(grouped).map(([name, value]) => ({
-      name,
-      value,
-    }));
+    return Object.entries(grouped)
+      .map(([name, value]) => ({
+        name,
+        value,
+        percent: total ? (value / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
   }, [expenses]);
+
+  const sortedMonths = useMemo(() => {
+    return [...months].sort((a, b) => {
+      if (a.year === b.year) {
+        return a.month - b.month;
+      }
+      return a.year - b.year;
+    });
+  }, [months]);
+
+  const sortedMonthsDesc = useMemo(() => {
+    return [...sortedMonths].reverse();
+  }, [sortedMonths]);
+
+  const categoryExpenseSource = useMemo(() => {
+    if (!categoryMonthFilterId) return allExpenses;
+    return allExpenses.filter((item) => item.month_id === categoryMonthFilterId);
+  }, [allExpenses, categoryMonthFilterId]);
+
+  const categoryChartData = useMemo(() => {
+    const grouped: Record<string, number> = {};
+
+    categoryExpenseSource.forEach((item) => {
+      grouped[item.category] = (grouped[item.category] || 0) + Number(item.amount);
+    });
+    const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
+
+    return Object.entries(grouped)
+      .map(([name, value]) => ({
+        name,
+        value,
+        percent: total ? (value / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [categoryExpenseSource]);
 
   const years = useMemo(() => {
     const uniqueYears = [...new Set(months.map((item) => item.year))];
@@ -794,16 +1002,157 @@ export default function Dashboard() {
     return months.filter((item) => String(item.year) === monthsYearFilter);
   }, [months, monthsYearFilter]);
 
-  const monthlyComparisonData = useMemo(() => {
-    return months
-      .slice(0, 6)
-      .map((month) => ({
+  const monthlyTotals = useMemo(() => {
+    const totals = new Map<string, { income: number; expense: number }>();
+
+    sortedMonths.forEach((month) => {
+      totals.set(month.id, { income: 0, expense: 0 });
+    });
+
+    allIncomes.forEach((item) => {
+      const current = totals.get(item.month_id) || { income: 0, expense: 0 };
+      totals.set(item.month_id, {
+        income: current.income + Number(item.amount),
+        expense: current.expense,
+      });
+    });
+
+    allExpenses.forEach((item) => {
+      const current = totals.get(item.month_id) || { income: 0, expense: 0 };
+      totals.set(item.month_id, {
+        income: current.income,
+        expense: current.expense + Number(item.amount),
+      });
+    });
+
+    return sortedMonths.map((month) => {
+      const total = totals.get(month.id) || { income: 0, expense: 0 };
+      return {
+        id: month.id,
         name: month.name,
-        receitas: month.id === selectedMonthId ? totalIncomes : 0,
-        despesas: month.id === selectedMonthId ? totalExpenses : 0,
+        receitas: total.income,
+        despesas: total.expense,
+        isFocus: comparisonMonthId
+          ? month.id === comparisonMonthId
+          : month.id === selectedMonthId,
+      };
+    });
+  }, [allExpenses, allIncomes, comparisonMonthId, selectedMonthId, sortedMonths]);
+
+  const currentYear = new Date().getFullYear();
+  const annualIncome = useMemo(() => {
+    const monthIds = new Set(
+      months.filter((item) => item.year === currentYear).map((item) => item.id)
+    );
+    return allIncomes
+      .filter((item) => monthIds.has(item.month_id))
+      .reduce((total, item) => total + Number(item.amount), 0);
+  }, [allIncomes, currentYear, months]);
+
+  const annualExpenses = useMemo(() => {
+    const monthIds = new Set(
+      months.filter((item) => item.year === currentYear).map((item) => item.id)
+    );
+    return allExpenses
+      .filter((item) => monthIds.has(item.month_id))
+      .reduce((total, item) => total + Number(item.amount), 0);
+  }, [allExpenses, currentYear, months]);
+
+  const monthlyTotalsMap = useMemo(() => {
+    return new Map(monthlyTotals.map((item) => [item.id, item]));
+  }, [monthlyTotals]);
+
+  const previousMonthTotals = useMemo(() => {
+    const selectedMonth = months.find((item) => item.id === selectedMonthId);
+
+    if (!selectedMonth) return null;
+
+    const previousMonth = selectedMonth.month === 1 ? 12 : selectedMonth.month - 1;
+    const previousYear = selectedMonth.month === 1 ? selectedMonth.year - 1 : selectedMonth.year;
+    const previousEntry = months.find(
+      (item) => item.month === previousMonth && item.year === previousYear
+    );
+
+    if (!previousEntry) return null;
+
+    return monthlyTotalsMap.get(previousEntry.id) || null;
+  }, [months, monthlyTotalsMap, selectedMonthId]);
+
+  const paymentMethodData = useMemo(() => {
+    const grouped: Record<string, number> = {};
+
+    expenses.forEach((item) => {
+      const method = item.payment_method || "Outros";
+      grouped[method] = (grouped[method] || 0) + Number(item.amount);
+    });
+
+    const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
+
+    return Object.entries(grouped)
+      .map(([name, value]) => ({
+        name,
+        value,
+        percent: total ? (value / total) * 100 : 0,
       }))
-      .reverse();
-  }, [months, selectedMonthId, totalIncomes, totalExpenses]);
+      .sort((a, b) => b.value - a.value);
+  }, [expenses]);
+
+  const upcomingExpenses = useMemo(() => {
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    return allExpenses
+      .filter((item) => item.due_date)
+      .map((item) => ({
+        ...item,
+        dueDateValue: new Date(item.due_date as string),
+      }))
+      .filter((item) => item.dueDateValue >= todayStart)
+      .sort((a, b) => a.dueDateValue.getTime() - b.dueDateValue.getTime())
+      .slice(0, 5);
+  }, [allExpenses]);
+
+  const savingsTotalsByGoal = useMemo(() => {
+    const totals: Record<string, { balance: number }> = {};
+
+    savingsGoals.forEach((goal) => {
+      totals[goal.id] = { balance: 0 };
+    });
+
+    savingsEntries.forEach((entry) => {
+      const current = totals[entry.goal_id] || { balance: 0 };
+      const balance =
+        current.balance + entry.saved_amount - entry.withdrawn_amount + entry.earned_amount;
+      totals[entry.goal_id] = { balance };
+    });
+
+    return totals;
+  }, [savingsEntries, savingsGoals]);
+
+  const totalSaved = useMemo(() => {
+    return Object.values(savingsTotalsByGoal).reduce(
+      (sum, item) => sum + item.balance,
+      0
+    );
+  }, [savingsTotalsByGoal]);
+
+  const topSavingsGoal = useMemo(() => {
+    const goalsWithTarget = savingsGoals.filter(
+      (goal) => goal.target_amount && goal.target_amount > 0
+    );
+
+    if (goalsWithTarget.length === 0) return null;
+
+    return goalsWithTarget
+      .map((goal) => {
+        const balance = savingsTotalsByGoal[goal.id]?.balance || 0;
+        const percent = goal.target_amount
+          ? (balance / goal.target_amount) * 100
+          : 0;
+        return { goal, balance, percent };
+      })
+      .sort((a, b) => b.percent - a.percent)[0];
+  }, [savingsGoals, savingsTotalsByGoal]);
 
   if (loading) {
     return (
@@ -813,7 +1162,195 @@ export default function Dashboard() {
     );
   }
 
+  function renderHomeView() {
+    const selectedMonth = months.find((item) => item.id === selectedMonthId);
+    const monthLabel = selectedMonth?.name || "Nenhum mês cadastrado";
+    const hideValues = preferences.hideValues;
+    const tooltipFormatter = (value: number) => formatCurrency(value, hideValues);
+    const pieLabel = ({ name, value }: { name: string; value: number }) =>
+      hideValues ? name : `${name}: ${formatCurrency(value, false)}`;
+
+    return (
+      <div className="grid gap-6">
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm text-slate-400">Inicio</p>
+              <h2 className="text-xl font-semibold">Dashboard do mês atual</h2>
+              <p className="mt-1 text-sm text-slate-400">Mês em foco: {monthLabel}</p>
+            </div>
+
+            <div className="w-full md:w-72">
+              <label className="text-sm text-slate-400">Mês do dashboard</label>
+              <select
+                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
+                value={selectedMonthId}
+                onChange={(e) => setSelectedMonthId(e.target.value)}
+              >
+                <option value="">Selecione um mês</option>
+                {sortedMonthsDesc.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <h2 className="text-xl font-semibold">Despesas por categoria</h2>
+              <select
+                className="rounded-xl border border-slate-700 bg-slate-950 p-2 text-sm text-white outline-none"
+                value={categoryMonthFilterId}
+                onChange={(e) => setCategoryMonthFilterId(e.target.value)}
+              >
+                <option value="">Todos os meses</option>
+                {sortedMonthsDesc.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-4 h-80">
+              {categoryChartData.length === 0 ? (
+                <p className="text-sm text-slate-400">
+                  Nenhuma despesa encontrada para o filtro selecionado.
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={categoryChartData}
+                      dataKey="value"
+                      nameKey="name"
+                      outerRadius={100}
+                      label={pieLabel}
+                    >
+                      {categoryChartData.map((_, index) => (
+                        <Cell
+                          key={index}
+                          fill={chartColors[index % chartColors.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => tooltipFormatter(Number(value))} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <h2 className="text-xl font-semibold">Comparativo dos meses</h2>
+              <select
+                className="rounded-xl border border-slate-700 bg-slate-950 p-2 text-sm text-white outline-none"
+                value={comparisonMonthId}
+                onChange={(e) => setComparisonMonthId(e.target.value)}
+              >
+                <option value="">Selecione um mês</option>
+                {sortedMonthsDesc.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-4 h-80">
+              {monthlyTotals.length === 0 ? (
+                <p className="text-sm text-slate-400">
+                  Nenhum mês encontrado para comparar.
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyTotals}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" stroke="#cbd5e1" />
+                    <YAxis stroke="#cbd5e1" />
+                    <Tooltip formatter={(value) => tooltipFormatter(Number(value))} />
+                    <Legend />
+                    <Bar dataKey="receitas" radius={[8, 8, 0, 0]}>
+                      {monthlyTotals.map((entry) => (
+                        <Cell
+                          key={`income-${entry.id}`}
+                          fill={entry.isFocus ? "#34d399" : "#14532d"}
+                        />
+                      ))}
+                    </Bar>
+                    <Bar dataKey="despesas" radius={[8, 8, 0, 0]}>
+                      {monthlyTotals.map((entry) => (
+                        <Cell
+                          key={`expense-${entry.id}`}
+                          fill={entry.isFocus ? "#f43f5e" : "#4c0519"}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 md:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <p className="text-sm text-slate-400">Receita anual ({currentYear})</p>
+            <h3 className="mt-2 text-2xl font-bold text-emerald-400">
+              {formatCurrency(annualIncome, hideValues)}
+            </h3>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <p className="text-sm text-slate-400">Despesa anual ({currentYear})</p>
+            <h3 className="mt-2 text-2xl font-bold text-rose-400">
+              {formatCurrency(annualExpenses, hideValues)}
+            </h3>
+          </div>
+        </section>
+
+        <section className="grid gap-6 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <p className="text-sm text-slate-400">Receita do mês</p>
+            <h3 className="mt-2 text-2xl font-bold text-emerald-400">
+              {formatCurrency(totalIncomes, hideValues)}
+            </h3>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <p className="text-sm text-slate-400">Despesa do mês</p>
+            <h3 className="mt-2 text-2xl font-bold text-rose-400">
+              {formatCurrency(totalExpenses, hideValues)}
+            </h3>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <p className="text-sm text-slate-400">Saldo do mês</p>
+            <h3
+              className={`mt-2 text-2xl font-bold ${
+                balance >= 0 ? "text-cyan-400" : "text-rose-400"
+              }`}
+            >
+              {formatCurrency(balance, hideValues)}
+            </h3>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   function renderDashboardHome() {
+    const hideValues = preferences.hideValues;
+    const tooltipFormatter = (value: number) => formatCurrency(value, hideValues);
+    const pieLabel = ({ name, value }: { name: string; value: number }) =>
+      hideValues ? name : `${name}: ${formatCurrency(value, false)}`;
+
     return (
       <div className="grid gap-6">
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
@@ -825,7 +1362,7 @@ export default function Dashboard() {
             onChange={(e) => setSelectedMonthId(e.target.value)}
           >
             <option value="">Selecione um mês</option>
-            {months.map((item) => (
+            {sortedMonthsDesc.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>
@@ -837,14 +1374,14 @@ export default function Dashboard() {
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <p className="text-sm text-slate-400">Receitas do mês</p>
             <h3 className="mt-2 text-2xl font-bold text-emerald-400">
-              R$ {totalIncomes.toFixed(2)}
+              {formatCurrency(totalIncomes, hideValues)}
             </h3>
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <p className="text-sm text-slate-400">Despesas do mês</p>
             <h3 className="mt-2 text-2xl font-bold text-rose-400">
-              R$ {totalExpenses.toFixed(2)}
+              {formatCurrency(totalExpenses, hideValues)}
             </h3>
           </div>
 
@@ -855,7 +1392,7 @@ export default function Dashboard() {
                 balance >= 0 ? "text-cyan-400" : "text-rose-400"
               }`}
             >
-              R$ {balance.toFixed(2)}
+              {formatCurrency(balance, hideValues)}
             </h3>
           </div>
         </section>
@@ -868,20 +1405,20 @@ export default function Dashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={categoryChartData}
+                    data={currentMonthCategoryData}
                     dataKey="value"
                     nameKey="name"
                     outerRadius={100}
-                    label
+                    label={pieLabel}
                   >
-                    {categoryChartData.map((_, index) => (
+                    {currentMonthCategoryData.map((_, index) => (
                       <Cell
                         key={index}
                         fill={chartColors[index % chartColors.length]}
                       />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip formatter={(value) => tooltipFormatter(Number(value))} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
@@ -893,14 +1430,28 @@ export default function Dashboard() {
 
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyComparisonData}>
+                <BarChart data={monthlyTotals}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                   <XAxis dataKey="name" stroke="#cbd5e1" />
                   <YAxis stroke="#cbd5e1" />
-                  <Tooltip />
+                  <Tooltip formatter={(value) => tooltipFormatter(Number(value))} />
                   <Legend />
-                  <Bar dataKey="receitas" fill="#34d399" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="despesas" fill="#f43f5e" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="receitas" radius={[8, 8, 0, 0]}>
+                    {monthlyTotals.map((entry) => (
+                      <Cell
+                        key={`income-dashboard-${entry.id}`}
+                        fill={entry.isFocus ? "#34d399" : "#14532d"}
+                      />
+                    ))}
+                  </Bar>
+                  <Bar dataKey="despesas" radius={[8, 8, 0, 0]}>
+                    {monthlyTotals.map((entry) => (
+                      <Cell
+                        key={`expense-dashboard-${entry.id}`}
+                        fill={entry.isFocus ? "#f43f5e" : "#4c0519"}
+                      />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1009,7 +1560,7 @@ export default function Dashboard() {
                     <div>
                       <p className="font-medium text-white">{item.description}</p>
                       <p className="text-sm text-slate-400">
-                        R$ {Number(item.amount).toFixed(2)} • {item.category || "Outros"}
+                        {formatCurrency(Number(item.amount), hideValues)} • {item.category || "Outros"}
                       </p>
                     </div>
 
@@ -1049,7 +1600,7 @@ export default function Dashboard() {
                     <div>
                       <p className="font-medium text-white">{item.description}</p>
                       <p className="text-sm text-slate-400">
-                        R$ {Number(item.amount).toFixed(2)} • {item.category || "Outros"}
+                        {formatCurrency(Number(item.amount), hideValues)} • {item.category || "Outros"}
                       </p>
                     </div>
 
@@ -1092,7 +1643,7 @@ export default function Dashboard() {
                       <p className="font-medium text-white">{item.description}</p>
                       <p className="text-sm text-slate-400">
                         {item.category ? `${item.category} • ` : ""}
-                        R$ {Number(item.amount).toFixed(2)}
+                        {formatCurrency(Number(item.amount), hideValues)}
                       </p>
                     </div>
 
@@ -1123,7 +1674,7 @@ export default function Dashboard() {
                     <div>
                       <p className="font-medium text-white">{item.description}</p>
                       <p className="text-sm text-slate-400">
-                        {item.category} • R$ {Number(item.amount).toFixed(2)}
+                        {item.category} • {formatCurrency(Number(item.amount), hideValues)}
                       </p>
                     </div>
 
@@ -1144,42 +1695,188 @@ export default function Dashboard() {
   }
 
   function renderAccountView() {
+    const initials = getInitials(profileName, email);
+    const themeDarkEnabled = preferences.theme === "dark";
+    const themeLightEnabled = preferences.theme === "light";
+
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-        <h2 className="mb-6 text-xl font-semibold">Minha conta</h2>
+      <div className="grid gap-6">
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-800 text-lg font-semibold text-cyan-200">
+                {initials}
+              </div>
+              <div>
+                <p className="text-sm text-slate-400">Perfil</p>
+                <h3 className="text-xl font-semibold">
+                  {profileName || "Nome nao informado"}
+                </h3>
+                <p className="text-sm text-slate-400">{email || "-"}</p>
+              </div>
+            </div>
 
-        <div className="grid gap-4">
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <p className="text-sm text-slate-400">Email cadastrado</p>
-            <p className="mt-1 text-white">{email}</p>
+          </div>
+        </section>
+
+        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="grid gap-6">
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+              <h3 className="mb-4 text-lg font-semibold">Dados da conta</h3>
+
+              <div className="grid gap-4">
+                <div>
+                  <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    Nome completo
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Digite seu nome"
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none transition focus:border-cyan-400"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    E-mail cadastrado
+                  </label>
+                  <div className="mt-2 rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm text-slate-200">
+                    {email || "-"}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+              <h3 className="mb-4 text-lg font-semibold">Seguranca</h3>
+
+              <div className="grid gap-4">
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  <p className="text-sm text-slate-400">Senha</p>
+                  <p className="mt-1 text-white">••••••••</p>
+                </div>
+
+                <button
+                  onClick={handleResetPassword}
+                  className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-semibold text-slate-200 hover:border-cyan-400 hover:text-cyan-200"
+                >
+                  Resetar ou alterar senha
+                </button>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+              <h3 className="mb-4 text-lg font-semibold">Preferencias</h3>
+
+              <div className="grid gap-3 text-sm text-slate-200">
+                <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
+                  <span>Tema escuro</span>
+                  <input
+                    type="checkbox"
+                    checked={themeDarkEnabled}
+                    onChange={() =>
+                      updatePreferences({ theme: themeDarkEnabled ? "light" : "dark" })
+                    }
+                    className="h-4 w-4 accent-cyan-400"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
+                  <span>Tema claro</span>
+                  <input
+                    type="checkbox"
+                    checked={themeLightEnabled}
+                    onChange={() =>
+                      updatePreferences({ theme: themeLightEnabled ? "dark" : "light" })
+                    }
+                    className="h-4 w-4 accent-cyan-400"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
+                  <span>Ocultar valores financeiros</span>
+                  <input
+                    type="checkbox"
+                    checked={preferences.hideValues}
+                    onChange={() =>
+                      updatePreferences({ hideValues: !preferences.hideValues })
+                    }
+                    className="h-4 w-4 accent-cyan-400"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
+                  <span>Menu recolhido por padrao</span>
+                  <input
+                    type="checkbox"
+                    checked={preferences.menuCollapsed}
+                    onChange={() =>
+                      updatePreferences({ menuCollapsed: !preferences.menuCollapsed })
+                    }
+                    className="h-4 w-4 accent-cyan-400"
+                  />
+                </label>
+              </div>
+            </section>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <p className="text-sm text-slate-400">Nome completo</p>
-            <p className="mt-1 text-white">
-              {profile?.full_name || "Não informado"}
-            </p>
-          </div>
+          <div className="grid gap-6">
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+              <h3 className="mb-4 text-lg font-semibold">Resumo da conta</h3>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <p className="text-sm text-slate-400">Senha</p>
-            <p className="mt-1 text-white">Não pode ser exibida por segurança</p>
-          </div>
+              <div className="grid gap-4">
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  <p className="text-sm text-slate-400">Meses cadastrados</p>
+                  <p className="mt-1 text-2xl font-semibold text-white">
+                    {months.length}
+                  </p>
+                </div>
 
-          <div className="flex flex-wrap gap-3 pt-2">
-            <button
-              onClick={handleResetPassword}
-              className="rounded-xl bg-white px-4 py-3 font-medium text-slate-900"
-            >
-              Resetar senha
-            </button>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  <p className="text-sm text-slate-400">Receitas</p>
+                  <p className="mt-1 text-2xl font-semibold text-emerald-300">
+                    {allIncomes.length}
+                  </p>
+                </div>
 
-            <button
-              onClick={handleLogout}
-              className="rounded-xl border border-rose-500 px-4 py-3 font-medium text-rose-400"
-            >
-              Sair
-            </button>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  <p className="text-sm text-slate-400">Despesas</p>
+                  <p className="mt-1 text-2xl font-semibold text-rose-300">
+                    {allExpenses.length}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  <p className="text-sm text-slate-400">Cofrinhos / metas</p>
+                  <p className="mt-1 text-2xl font-semibold text-cyan-300">
+                    {savingsGoalsCount}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+              <h3 className="mb-4 text-lg font-semibold">Acoes</h3>
+
+              <div className="grid gap-3">
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={profileSaving}
+                  className="rounded-xl bg-cyan-400 px-4 py-3 font-semibold text-slate-950 disabled:opacity-70"
+                >
+                  {profileSaving ? "Salvando..." : "Salvar alteracoes"}
+                </button>
+
+                <button
+                  onClick={handleLogout}
+                  className="rounded-xl border border-slate-700 px-4 py-3 font-semibold text-slate-200 hover:border-slate-500"
+                >
+                  Sair
+                </button>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -1187,6 +1884,8 @@ export default function Dashboard() {
   }
 
   function renderCreateMonthView() {
+    const hideValues = preferences.hideValues;
+
     return (
       <div className="grid gap-6">
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
@@ -1230,21 +1929,21 @@ export default function Dashboard() {
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <p className="text-sm text-slate-400">Receitas do novo mês</p>
             <h3 className="mt-2 text-2xl font-bold text-emerald-400">
-              R$ 0,00
+              {formatCurrency(0, hideValues)}
             </h3>
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <p className="text-sm text-slate-400">Despesas do novo mês</p>
             <h3 className="mt-2 text-2xl font-bold text-rose-400">
-              R$ 0,00
+              {formatCurrency(0, hideValues)}
             </h3>
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <p className="text-sm text-slate-400">Saldo do novo mês</p>
             <h3 className="mt-2 text-2xl font-bold text-cyan-400">
-              R$ 0,00
+              {formatCurrency(0, hideValues)}
             </h3>
           </div>
         </section>
@@ -1334,6 +2033,74 @@ export default function Dashboard() {
             </form>
           </div>
         </section>
+
+        <section className="grid gap-6 xl:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <h2 className="mb-4 text-xl font-semibold">
+              Adicionar receitas recorrentes
+            </h2>
+
+            {recurringIncomes.length === 0 ? (
+              <p className="text-slate-400">Nenhuma receita recorrente cadastrada.</p>
+            ) : (
+              <div className="grid gap-3">
+                {recurringIncomes.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div>
+                      <p className="font-medium text-white">{item.description}</p>
+                      <p className="text-sm text-slate-400">
+                        {formatCurrency(Number(item.amount), hideValues)} • {item.category || "Outros"}
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => handleApplyRecurringToMonth(item)}
+                      className="rounded-lg bg-cyan-400 px-3 py-2 text-sm font-medium text-slate-950"
+                    >
+                      Adicionar ao mês
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <h2 className="mb-4 text-xl font-semibold">
+              Adicionar despesas recorrentes
+            </h2>
+
+            {recurringExpenses.length === 0 ? (
+              <p className="text-slate-400">Nenhuma despesa recorrente cadastrada.</p>
+            ) : (
+              <div className="grid gap-3">
+                {recurringExpenses.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div>
+                      <p className="font-medium text-white">{item.description}</p>
+                      <p className="text-sm text-slate-400">
+                        {formatCurrency(Number(item.amount), hideValues)} • {item.category || "Outros"}
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => handleApplyRecurringToMonth(item)}
+                      className="rounded-lg bg-cyan-400 px-3 py-2 text-sm font-medium text-slate-950"
+                    >
+                      Adicionar ao mês
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     );
   }
@@ -1397,9 +2164,9 @@ export default function Dashboard() {
                 >
                   <div>
                     <p className="font-medium text-white">{item.description}</p>
-                    <p className="text-sm text-slate-400">
-                      R$ {Number(item.amount).toFixed(2)} • {item.category || "Outros"}
-                    </p>
+                      <p className="text-sm text-slate-400">
+                        {formatCurrency(Number(item.amount), hideValues)} • {item.category || "Outros"}
+                      </p>
                   </div>
 
                   <div className="flex gap-2">
@@ -1485,9 +2252,9 @@ export default function Dashboard() {
                 >
                   <div>
                     <p className="font-medium text-white">{item.description}</p>
-                    <p className="text-sm text-slate-400">
-                      R$ {Number(item.amount).toFixed(2)} • {item.category || "Outros"}
-                    </p>
+                      <p className="text-sm text-slate-400">
+                        {formatCurrency(Number(item.amount), hideValues)} • {item.category || "Outros"}
+                      </p>
                   </div>
 
                   <div className="flex gap-2">
@@ -1774,9 +2541,23 @@ export default function Dashboard() {
     );
   }
 
+  const viewTitleMap: Record<string, string> = {
+    home: "Inicio",
+    account: "Minha conta",
+    categories: "Categorias",
+    "create-month": "Criar mês",
+    dashboard: "Selecionar mês",
+    "recurring-incomes": "Receitas recorrentes",
+    "recurring-expenses": "Despesas recorrentes",
+    months: "Meses cadastrados",
+  };
+
+  const viewTitle = viewTitleMap[currentView] || "Dashboard";
+
   return (
     <>
-      <AppShell title="Dashboard">
+      <AppShell title={viewTitle}>
+        {currentView === "home" && renderHomeView()}
         {currentView === "account" && renderAccountView()}
         {currentView === "categories" && renderCategoriesView()}
         {currentView === "create-month" && renderCreateMonthView()}

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { CenterModal } from "@/components/center-modal";
+import { usePreferences } from "@/components/preferences-provider";
+import { formatCurrency } from "@/lib/formatters";
 import { supabase } from "@/lib/supabase";
 
 type SavingsGoal = {
@@ -32,6 +34,9 @@ type ModalState = {
 };
 
 export default function CofrinhosPage() {
+  const { preferences } = usePreferences();
+  const hideValues = preferences.hideValues;
+
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState("");
 
@@ -251,7 +256,7 @@ export default function CofrinhosPage() {
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <p className="text-sm text-slate-400">Total bruto das caixinhas</p>
             <h2 className="mt-2 text-3xl font-bold text-emerald-400">
-              R$ {totalGross.toFixed(2)}
+              {formatCurrency(totalGross, hideValues)}
             </h2>
           </section>
 
@@ -309,14 +314,14 @@ export default function CofrinhosPage() {
                           {goal.name}
                         </h3>
                         <p className="mt-2 text-sm text-slate-400">
-                          Meta: {goal.target_amount ? `R$ ${goal.target_amount.toFixed(2)}` : "Nao definida"}
+                          Meta: {goal.target_amount ? formatCurrency(goal.target_amount, hideValues) : "Nao definida"}
                         </p>
                       </div>
 
                       <div className="mt-4">
                         <p className="text-xs text-slate-400">Total bruto</p>
                         <p className="text-xl font-semibold text-emerald-400">
-                          R$ {goalTotals?.balance.toFixed(2) || "0.00"}
+                          {formatCurrency(goalTotals?.balance || 0, hideValues)}
                         </p>
                         <p className="mt-2 text-xs text-slate-500">
                           Clique para abrir

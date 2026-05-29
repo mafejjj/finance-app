@@ -3,21 +3,72 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+html[data-theme="light"] {
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+html[data-theme="light"] .bg-slate-950 {
+  background-color: #f8fafc;
+}
+
+html[data-theme="light"] .bg-slate-900 {
+  background-color: #ffffff;
+}
+
+html[data-theme="light"] .bg-slate-800 {
+  background-color: #e2e8f0;
+}
+
+html[data-theme="light"] .bg-slate-800\/60 {
+  background-color: rgba(226, 232, 240, 0.8);
+}
+
+html[data-theme="light"] .bg-slate-900\/60 {
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+html[data-theme="light"] .bg-slate-900\/70 {
+  background-color: rgba(255, 255, 255, 0.92);
+}
+
+html[data-theme="light"] .bg-slate-900\/90 {
+  background-color: rgba(255, 255, 255, 0.96);
+}
+
+html[data-theme="light"] .bg-slate-950\/70 {
+  background-color: rgba(15, 23, 42, 0.12);
+}
+
+html[data-theme="light"] .text-white {
+  color: #0f172a;
+}
+
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300,
+html[data-theme="light"] .text-slate-400,
+html[data-theme="light"] .text-slate-500 {
+  color: #475569;
+}
+
+html[data-theme="light"] .border-slate-700,
+html[data-theme="light"] .border-slate-800 {
+  border-color: #e2e8f0;
 }
 
 .page-fade {

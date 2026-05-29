@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { PageTransition } from "./page-transition";
+import { PreferencesProvider } from "@/components/preferences-provider";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -29,7 +30,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <PageTransition>{children}</PageTransition>
+        <PreferencesProvider>
+          <PageTransition>{children}</PageTransition>
+        </PreferencesProvider>
       </body>
     </html>
   );
