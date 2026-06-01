@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { CenterModal } from "@/components/center-modal";
@@ -48,6 +48,36 @@ export default function CofrinhosPage() {
 
   const [modal, setModal] = useState<ModalState | null>(null);
 
+  const refreshGoals = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("savings_goals")
+      .select("id, name, target_amount")
+      .eq("user_id", targetUserId)
+      .order("created_at", { ascending: false });
+
+    if (data) setGoals(data as SavingsGoal[]);
+  }, [userId]);
+
+  const refreshEntries = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("savings_entries")
+      .select("id, goal_id, month, year, saved_amount, withdrawn_amount, earned_amount")
+      .eq("user_id", targetUserId)
+      .order("year", { ascending: false })
+      .order("month", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (data) setEntries(data as SavingsEntry[]);
+  }, [userId]);
+
   useEffect(() => {
     async function loadData() {
       const {
@@ -67,37 +97,7 @@ export default function CofrinhosPage() {
     }
 
     loadData();
-  }, []);
-
-  async function refreshGoals(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId) return;
-
-    const { data } = await supabase
-      .from("savings_goals")
-      .select("id, name, target_amount")
-      .eq("user_id", targetUserId)
-      .order("created_at", { ascending: false });
-
-    if (data) setGoals(data as SavingsGoal[]);
-  }
-
-  async function refreshEntries(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId) return;
-
-    const { data } = await supabase
-      .from("savings_entries")
-      .select("id, goal_id, month, year, saved_amount, withdrawn_amount, earned_amount")
-      .eq("user_id", targetUserId)
-      .order("year", { ascending: false })
-      .order("month", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (data) setEntries(data as SavingsEntry[]);
-  }
+  }, [refreshEntries, refreshGoals]);
 
   function openAlert(message: string, intent: ModalState["intent"] = "info") {
     const titleMap: Record<string, string> = {
@@ -112,22 +112,6 @@ export default function CofrinhosPage() {
       message,
       intent,
       confirmLabel: "Ok",
-    });
-  }
-
-  function openConfirm(options: {
-    title: string;
-    message: string;
-    confirmLabel?: string;
-    onConfirm: () => void | Promise<void>;
-  }) {
-    setModal({
-      title: options.title,
-      message: options.message,
-      intent: "warning",
-      confirmLabel: options.confirmLabel || "Confirmar",
-      cancelLabel: "Cancelar",
-      onConfirm: options.onConfirm,
     });
   }
 
@@ -168,34 +152,6 @@ export default function CofrinhosPage() {
     setGoalTarget("");
 
     await refreshGoals();
-  }
-
-  async function handleDeleteGoal(goal: SavingsGoal) {
-    openConfirm({
-      title: "Deletar cofrinho",
-      message: `Deseja deletar o cofrinho "${goal.name}"?`,
-      confirmLabel: "Deletar",
-      onConfirm: async () => {
-        if (!userId) {
-          openAlert("Usuário não encontrado.", "error");
-          return;
-        }
-
-        const { error } = await supabase
-          .from("savings_goals")
-          .delete()
-          .eq("id", goal.id)
-          .eq("user_id", userId);
-
-        if (error) {
-          openAlert("Erro ao deletar cofrinho.", "error");
-          return;
-        }
-
-        await refreshGoals();
-        await refreshEntries();
-      },
-    });
   }
 
   const entriesByGoal = useMemo(() => {

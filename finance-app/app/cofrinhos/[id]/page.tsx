@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -54,6 +54,38 @@ export default function CofrinhoDetailPage() {
 
   const [modal, setModal] = useState<ModalState | null>(null);
 
+  const refreshGoal = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("savings_goals")
+      .select("id, name, target_amount")
+      .eq("user_id", targetUserId)
+      .eq("id", goalId)
+      .single();
+
+    if (data) setGoal(data as SavingsGoal);
+  }, [goalId, userId]);
+
+  const refreshEntries = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+
+    if (!targetUserId) return;
+
+    const { data } = await supabase
+      .from("savings_entries")
+      .select("id, goal_id, month, year, saved_amount, withdrawn_amount, earned_amount")
+      .eq("user_id", targetUserId)
+      .eq("goal_id", goalId)
+      .order("year", { ascending: false })
+      .order("month", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (data) setEntries(data as SavingsEntry[]);
+  }, [goalId, userId]);
+
   useEffect(() => {
     async function loadData() {
       const {
@@ -73,39 +105,7 @@ export default function CofrinhoDetailPage() {
     }
 
     loadData();
-  }, [goalId]);
-
-  async function refreshGoal(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId || !goalId) return;
-
-    const { data } = await supabase
-      .from("savings_goals")
-      .select("id, name, target_amount")
-      .eq("id", goalId)
-      .eq("user_id", targetUserId)
-      .single();
-
-    if (data) setGoal(data as SavingsGoal);
-  }
-
-  async function refreshEntries(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId || !goalId) return;
-
-    const { data } = await supabase
-      .from("savings_entries")
-      .select("id, goal_id, month, year, saved_amount, withdrawn_amount, earned_amount")
-      .eq("user_id", targetUserId)
-      .eq("goal_id", goalId)
-      .order("year", { ascending: false })
-      .order("month", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (data) setEntries(data as SavingsEntry[]);
-  }
+  }, [refreshEntries, refreshGoal]);
 
   function openAlert(message: string, intent: ModalState["intent"] = "info") {
     const titleMap: Record<string, string> = {

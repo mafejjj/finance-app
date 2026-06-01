@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CenterModal } from "@/components/center-modal";
@@ -10,18 +10,20 @@ import { supabase } from "@/lib/supabase";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/constants";
 import { CategoryType, Expense, Income, Month, RecurringEntry } from "@/types";
 import {
-  BarChart,
   Bar,
+  BarChart,
   CartesianGrid,
-  Cell,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
-  ResponsiveContainer,
-  Legend,
-  LabelList,
   PieChart,
-  Pie
+  Pie,
+  Cell,
+  type PieLabelRenderProps,
 } from "recharts";
 
 type Profile = {
@@ -34,6 +36,13 @@ type CategoryRow = {
   id: string;
   name: string;
   type: CategoryType;
+};
+
+type CategoryOverride = {
+  id: string;
+  name: string;
+  type: CategoryType;
+  action: "remove";
 };
 
 type ModalState = {
@@ -49,202 +58,103 @@ export default function Dashboard() {
   const searchParams = useSearchParams();
   const currentView = searchParams.get("view") || "home";
 
+  const { preferences, updatePreferences } = usePreferences();
+  const hideValues = preferences.hideValues;
+
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState("");
   const [userId, setUserId] = useState("");
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [profileName, setProfileName] = useState("");
+  const [email, setEmail] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
+
+  const [allEntries, setAllEntries] = useState<any[]>([]);
+  const [savingsEntries, setSavingsEntries] = useState<any[]>([]);
+
+  const [allIncomes, setAllIncomes] = useState<Income[]>([]);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
+
+  const [incomes, setIncomes] = useState<Income[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  const [categoryOverrides, setCategoryOverrides] = useState<CategoryOverride[]>([]);
+  const [savingsGoals, setSavingsGoals] = useState<any[]>([]);
+  const [savingsGoalsCount, setSavingsGoalsCount] = useState(0);
 
   const [months, setMonths] = useState<Month[]>([]);
   const [selectedMonthId, setSelectedMonthId] = useState("");
   const [comparisonMonthId, setComparisonMonthId] = useState("");
   const [categoryMonthFilterId, setCategoryMonthFilterId] = useState("");
+  const [monthsYearFilter, setMonthsYearFilter] = useState("");
 
   const [monthName, setMonthName] = useState("");
   const [monthNumber, setMonthNumber] = useState("");
   const [year, setYear] = useState("");
 
-  const [incomes, setIncomes] = useState<Income[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [allIncomes, setAllIncomes] = useState<Income[]>([]);
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
-  const [savingsGoalsCount, setSavingsGoalsCount] = useState(0);
-  const [savingsGoals, setSavingsGoals] = useState<
-    Array<{ id: string; name: string; target_amount: number | null }>
-  >([]);
-  const [savingsEntries, setSavingsEntries] = useState<
-    Array<{
-      id: string;
-      goal_id: string;
-      saved_amount: number;
-      withdrawn_amount: number;
-      earned_amount: number;
-    }>
-  >([]);
-
   const [incomeDescription, setIncomeDescription] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
   const [incomeCategory, setIncomeCategory] = useState("Salário");
 
-  const [expenseDescription, setExpenseDescription] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
-  const [expenseCategory, setExpenseCategory] = useState("Moradia");
-  const [expenseDueDate, setExpenseDueDate] = useState("");
-  const [expensePaymentMethod, setExpensePaymentMethod] = useState("PIX");
+  const [expenseCategory, setExpenseCategory] = useState("");
+  const [expenseSubcategory, setExpenseSubcategory] = useState("");
+  const [expenseDescription, setExpenseDescription] = useState("");
 
   const [recurringEntries, setRecurringEntries] = useState<RecurringEntry[]>([]);
   const [recurringDescription, setRecurringDescription] = useState("");
   const [recurringAmount, setRecurringAmount] = useState("");
-  const [recurringCategory, setRecurringCategory] = useState("Moradia");
+  const [recurringCategory, setRecurringCategory] = useState("Salário");
+
+  const [modal, setModal] = useState<ModalState | null>(null);
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [categoryName, setCategoryName] = useState("");
   const [categoryType, setCategoryType] = useState<CategoryType>("income");
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-  const [fixedIncomeCategories, setFixedIncomeCategories] = useState(
-    INCOME_CATEGORIES
-  );
-  const [fixedExpenseCategories, setFixedExpenseCategories] = useState(
-    EXPENSE_CATEGORIES
-  );
-  const [removedFixedIncomeCategories, setRemovedFixedIncomeCategories] = useState<
-    string[]
-  >([]);
-  const [removedFixedExpenseCategories, setRemovedFixedExpenseCategories] = useState<
-    string[]
-  >([]);
-  const [modal, setModal] = useState<ModalState | null>(null);
-
-  const { preferences, updatePreferences } = usePreferences();
-
-  const [monthsYearFilter, setMonthsYearFilter] = useState("");
 
   const chartColors = [
+    "#22d3ee",
     "#38bdf8",
-    "#f43f5e",
-    "#34d399",
-    "#f59e0b",
+    "#f472b6",
     "#a78bfa",
+    "#34d399",
+    "#fbbf24",
     "#fb7185",
-    "#94a3b8",
+    "#60a5fa",
   ];
 
-  const paymentMethods = [
-    "Cartao de credito",
-    "PIX",
-    "Dinheiro",
-    "Debito",
-    "Outros",
-  ];
-
-  useEffect(() => {
-    async function loadData() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        window.location.href = "/login";
-        return;
-      }
-
-      setEmail(user.email || "");
-      setUserId(user.id);
-
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
-
-      if (profileData) {
-        setProfile(profileData);
-        setProfileName(profileData.full_name || "");
-      }
-
-      const { data: monthsData } = await supabase
-        .from("months")
-        .select("*")
-        .order("year", { ascending: false })
-        .order("month", { ascending: false });
-
-      if (monthsData) {
-        setMonths(monthsData);
-
-        if (monthsData.length > 0) {
-          const now = new Date();
-          const currentMonth = now.getMonth() + 1;
-          const currentYear = now.getFullYear();
-          const currentMonthEntry = monthsData.find(
-            (item) => item.month === currentMonth && item.year === currentYear
-          );
-          const nextSelected = currentMonthEntry?.id || monthsData[0].id;
-
-          setSelectedMonthId(nextSelected);
-          setComparisonMonthId(nextSelected);
-        }
-      }
-
-      const { data: recurringData } = await supabase
-        .from("recurring_entries")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (recurringData) {
-        setRecurringEntries(recurringData);
-      }
-
-      const { data: categoriesData } = await supabase
-        .from("categories")
-        .select("id, name, type")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (categoriesData) {
-        setCategories(categoriesData as CategoryRow[]);
-      }
-
-      await refreshCategoryOverrides(user.id);
-      await refreshAllEntries(user.id);
-      await refreshSavingsGoalsCount(user.id);
-      await refreshSavingsGoals(user.id);
-      await refreshSavingsEntries(user.id);
-
-      setLoading(false);
-    }
-
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedMonthId) {
-      setIncomes([]);
-      setExpenses([]);
-      return;
-    }
-
-    refreshEntries(selectedMonthId);
-  }, [selectedMonthId]);
-
-  async function refreshEntries(monthId: string) {
-    const { data: incomesData } = await supabase
-      .from("incomes")
-      .select("*")
-      .eq("month_id", monthId)
-      .order("created_at", { ascending: false });
-
-    const { data: expensesData } = await supabase
-      .from("expenses")
-      .select("*")
-      .eq("month_id", monthId)
-      .order("created_at", { ascending: false });
-
-    if (incomesData) setIncomes(incomesData);
-    if (expensesData) setExpenses(expensesData);
+  function openAlert(message: string, intent: ModalState["intent"] = "info") {
+    setModal({
+      title: "Aviso",
+      message,
+      intent,
+    });
   }
 
-  async function refreshAllEntries(userIdOverride?: string) {
+  function openConfirm(config: ModalState) {
+    setModal({
+      cancelLabel: "Cancelar",
+      ...config,
+    });
+  }
+
+  async function handleModalConfirm() {
+    if (modal?.onConfirm) {
+      await modal.onConfirm();
+    }
+    setModal(null);
+  }
+
+  function getInitials(name?: string | null, mail?: string | null) {
+    const source = (name || mail || "").trim();
+    if (!source) return "--";
+    const parts = source.split(/\s+/).filter(Boolean);
+    const first = parts[0]?.[0] || "";
+    const last = parts.length > 1 ? parts[parts.length - 1]?.[0] : "";
+    return `${first}${last}`.toUpperCase() || "--";
+  }
+
+  const refreshAllEntries = useCallback(async (userIdOverride?: string) => {
     const targetUserId = userIdOverride || userId;
 
     if (!targetUserId) return;
@@ -263,309 +173,274 @@ export default function Dashboard() {
 
     if (incomesData) setAllIncomes(incomesData);
     if (expensesData) setAllExpenses(expensesData);
-  }
+  }, [userId]);
 
-  async function refreshSavingsGoalsCount(userIdOverride?: string) {
+  const refreshSavingsEntries = useCallback(async (userIdOverride?: string) => {
     const targetUserId = userIdOverride || userId;
-
     if (!targetUserId) return;
-
-    const { count } = await supabase
-      .from("savings_goals")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", targetUserId);
-
-    setSavingsGoalsCount(count || 0);
-  }
-
-  async function refreshSavingsGoals(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId) return;
-
-    const { data } = await supabase
-      .from("savings_goals")
-      .select("id, name, target_amount")
-      .eq("user_id", targetUserId)
-      .order("created_at", { ascending: false });
-
-    if (data) setSavingsGoals(data as Array<{ id: string; name: string; target_amount: number | null }>);
-  }
-
-  async function refreshSavingsEntries(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId) return;
-
     const { data } = await supabase
       .from("savings_entries")
-      .select("id, goal_id, saved_amount, withdrawn_amount, earned_amount")
+      .select("*")
       .eq("user_id", targetUserId)
       .order("created_at", { ascending: false });
+    if (data) setSavingsEntries(data);
+  }, [userId]);
 
-    if (data)
-      setSavingsEntries(
-        data as Array<{
-          id: string;
-          goal_id: string;
-          saved_amount: number;
-          withdrawn_amount: number;
-          earned_amount: number;
-        }>
-      );
-  }
-
-  async function refreshMonths() {
+  const refreshSavingsGoals = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+    if (!targetUserId) return;
     const { data } = await supabase
-      .from("months")
+      .from("savings_goals")
       .select("*")
-      .order("year", { ascending: false })
-      .order("month", { ascending: false });
+      .eq("user_id", targetUserId)
+      .order("created_at", { ascending: false });
+    if (data) setSavingsGoals(data);
+  }, [userId]);
 
-    if (data) {
-      setMonths(data);
+  const refreshSavingsGoalsCount = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+    if (!targetUserId) return;
+    const { count } = await supabase
+      .from("savings_goals")
+      .select("count", { count: "exact" })
+      .eq("user_id", targetUserId);
+    if (count) setSavingsGoalsCount(count);
+  }, [userId]);
 
-      if (data.length === 0) {
-        setSelectedMonthId("");
-        setComparisonMonthId("");
-        setIncomes([]);
-        setExpenses([]);
-        return;
-      }
+  const refreshCategoryOverrides = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+    if (!targetUserId) return;
+    const { data } = await supabase
+      .from("category_overrides")
+      .select("*")
+      .eq("user_id", targetUserId);
+    if (data) setCategoryOverrides(data);
+  }, [userId]);
 
-      const stillExists = data.some((item) => item.id === selectedMonthId);
+  const refreshCategories = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+    if (!targetUserId) return;
+    const { data } = await supabase
+      .from("categories")
+      .select("*")
+      .eq("user_id", targetUserId);
+    if (data) setCategories(data);
+  }, [userId]);
 
-      const nextSelected = stillExists ? selectedMonthId : data[0].id;
-      const comparisonExists = data.some((item) => item.id === comparisonMonthId);
-
-      if (!stillExists) {
-        setSelectedMonthId(nextSelected);
-      }
-
-      if (!comparisonExists) {
-        setComparisonMonthId(nextSelected);
-      }
-    }
-  }
-
-  async function refreshRecurringEntries() {
+  const refreshRecurringEntries = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+    if (!targetUserId) return;
     const { data } = await supabase
       .from("recurring_entries")
       .select("*")
-      .order("created_at", { ascending: false });
-
-    if (data) setRecurringEntries(data);
-  }
-
-  async function refreshCategories() {
-    if (!userId) return;
-
-    const { data } = await supabase
-      .from("categories")
-      .select("id, name, type")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-
-    if (data) setCategories(data as CategoryRow[]);
-  }
-
-  function applyFixedExpenseOverrides(removed: string[]) {
-    setRemovedFixedExpenseCategories(removed);
-
-    const filtered = EXPENSE_CATEGORIES.filter(
-      (category) => !removed.includes(category)
-    );
-
-    setFixedExpenseCategories(filtered);
-
-    if (!filtered.includes(expenseCategory)) {
-      setExpenseCategory(filtered[0] || "Outros");
-    }
-
-    if (!filtered.includes(recurringCategory)) {
-      setRecurringCategory(filtered[0] || "Outros");
-    }
-  }
-
-  function applyFixedIncomeOverrides(removed: string[]) {
-    setRemovedFixedIncomeCategories(removed);
-
-    const filtered = INCOME_CATEGORIES.filter(
-      (category) => !removed.includes(category)
-    );
-
-    setFixedIncomeCategories(filtered);
-
-    if (!filtered.includes(incomeCategory)) {
-      setIncomeCategory(filtered[0] || "Outros");
-    }
-  }
-
-  async function refreshCategoryOverrides(userIdOverride?: string) {
-    const targetUserId = userIdOverride || userId;
-
-    if (!targetUserId) return;
-
-    const { data } = await supabase
-      .from("category_overrides")
-      .select("name, type")
       .eq("user_id", targetUserId)
-      .eq("action", "remove")
+      .order("created_at", { ascending: false });
+    if (data) setRecurringEntries(data);
+  }, [userId]);
+
+  const refreshMonths = useCallback(async (userIdOverride?: string) => {
+    const targetUserId = userIdOverride || userId;
+    if (!targetUserId) return;
+    const { data } = await supabase
+      .from("months")
+      .select("*")
+      .eq("user_id", targetUserId)
+      .order("year", { ascending: false })
+      .order("month", { ascending: false });
+    if (data) setMonths(data);
+  }, [userId]);
+
+  const refreshEntries = useCallback(async (monthId?: string) => {
+    const targetMonthId = monthId || selectedMonthId;
+    if (!userId || !targetMonthId) {
+      setIncomes([]);
+      setExpenses([]);
+      return;
+    }
+
+    const { data: incomesData } = await supabase
+      .from("incomes")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("month_id", targetMonthId)
       .order("created_at", { ascending: false });
 
-    if (!data) return;
+    const { data: expensesData } = await supabase
+      .from("expenses")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("month_id", targetMonthId)
+      .order("created_at", { ascending: false });
 
-    const removedExpense = data
-      .filter((item) => item.type === "expense")
-      .map((item) => item.name)
-      .filter(Boolean);
+    if (incomesData) setIncomes(incomesData);
+    if (expensesData) setExpenses(expensesData);
+  }, [selectedMonthId, userId]);
 
-    const removedIncome = data
-      .filter((item) => item.type === "income")
-      .map((item) => item.name)
-      .filter(Boolean);
+  useEffect(() => {
+    async function loadData() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    applyFixedExpenseOverrides(removedExpense);
-    applyFixedIncomeOverrides(removedIncome);
-  }
+      if (!user) {
+        window.location.href = "/login";
+        return;
+      }
 
-  function openModal(state: ModalState) {
-    setModal(state);
-  }
+      setUserId(user.id);
 
-  function openAlert(message: string, intent: ModalState["intent"] = "info") {
-    const titleMap: Record<string, string> = {
-      info: "Atenção",
-      success: "Pronto",
-      warning: "Atenção",
-      error: "Erro",
-    };
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
 
-    openModal({
-      title: titleMap[intent || "info"],
-      message,
-      intent,
-      confirmLabel: "Ok",
-    });
-  }
+      if (profileData) setProfile(profileData);
+      setProfileName(profileData?.full_name || "");
+      setEmail(profileData?.email || user.email || "");
 
-  function openConfirm(options: {
-    title: string;
-    message: string;
-    confirmLabel?: string;
-    onConfirm: () => void | Promise<void>;
-  }) {
-    openModal({
-      title: options.title,
-      message: options.message,
-      intent: "warning",
-      confirmLabel: options.confirmLabel || "Confirmar",
-      cancelLabel: "Cancelar",
-      onConfirm: options.onConfirm,
-    });
-  }
+      await Promise.all([
+        refreshAllEntries(user.id),
+        refreshSavingsEntries(user.id),
+        refreshSavingsGoals(user.id),
+        refreshSavingsGoalsCount(user.id),
+        refreshCategoryOverrides(user.id),
+        refreshCategories(user.id),
+        refreshRecurringEntries(user.id),
+        refreshMonths(user.id),
+      ]);
 
-  async function handleModalConfirm() {
-    if (modal?.onConfirm) {
-      await modal.onConfirm();
+      setLoading(false);
     }
-    setModal(null);
-  }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }
+    loadData();
+  }, [
+    refreshAllEntries,
+    refreshCategoryOverrides,
+    refreshSavingsEntries,
+    refreshSavingsGoals,
+    refreshSavingsGoalsCount,
+    refreshCategories,
+    refreshRecurringEntries,
+    refreshMonths,
+  ]);
 
-  async function handleResetPassword() {
-    if (!email) return;
-
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: "http://localhost:3000/login",
-    });
-
-    if (error) {
-      openAlert("Erro ao enviar email de redefinição.", "error");
+  useEffect(() => {
+    if (!selectedMonthId) {
+      setIncomes([]);
+      setExpenses([]);
       return;
     }
 
-    openAlert("Email de redefinição enviado.", "success");
-  }
+    refreshEntries(selectedMonthId);
+  }, [selectedMonthId, refreshEntries]);
 
-  async function handleSaveProfile() {
-    if (!userId) {
-      openAlert("Usuário não encontrado.", "error");
-      return;
-    }
+  const monthById = useMemo(() => {
+    return new Map(months.map((item) => [item.id, item]));
+  }, [months]);
 
-    setProfileSaving(true);
-
-    const { error } = await supabase
-      .from("profiles")
-      .update({ full_name: profileName.trim() })
-      .eq("id", userId);
-
-    setProfileSaving(false);
-
-    if (error) {
-      openAlert("Erro ao atualizar perfil.", "error");
-      return;
-    }
-
-    setProfile((prev) =>
-      prev ? { ...prev, full_name: profileName.trim() } : prev
+  const sortedMonthsDesc = useMemo(() => {
+    return [...months].sort((a, b) =>
+      a.year === b.year ? b.month - a.month : b.year - a.year
     );
-    openAlert("Perfil atualizado.", "success");
-  }
+  }, [months]);
 
-  function getInitials(name?: string | null, fallbackEmail?: string | null) {
-    const source = (name || fallbackEmail || "").trim();
-    if (!source) return "U";
+  const sortedMonthsAsc = useMemo(() => {
+    return [...sortedMonthsDesc].reverse();
+  }, [sortedMonthsDesc]);
 
-    const parts = source.split(/\s+/).filter(Boolean);
-    const initials = parts.length === 1 ? parts[0][0] : parts[0][0] + parts[1][0];
-    return initials.toUpperCase();
-  }
+  const years = useMemo(() => {
+    const unique = Array.from(new Set(months.map((item) => item.year)));
+    return unique.sort((a, b) => b - a);
+  }, [months]);
 
-  async function handleCreateMonth(e: React.FormEvent) {
-    e.preventDefault();
+  const filteredMonths = useMemo(() => {
+    if (!monthsYearFilter) return sortedMonthsDesc;
+    return sortedMonthsDesc.filter(
+      (item) => String(item.year) === monthsYearFilter
+    );
+  }, [monthsYearFilter, sortedMonthsDesc]);
 
-    if (!monthName || !monthNumber || !year) {
-      openAlert("Preencha nome, mês e ano.", "warning");
-      return;
-    }
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
 
-    const { error } = await supabase.from("months").insert({
-      user_id: userId,
-      name: monthName,
-      month: Number(monthNumber),
-      year: Number(year),
+  const annualIncome = useMemo(() => {
+    return allIncomes.reduce((total, item) => {
+      const month = monthById.get(item.month_id);
+      if (!month || month.year !== currentYear) return total;
+      return total + Number(item.amount);
+    }, 0);
+  }, [allIncomes, currentYear, monthById]);
+
+  const annualExpenses = useMemo(() => {
+    return allExpenses.reduce((total, item) => {
+      const month = monthById.get(item.month_id);
+      if (!month || month.year !== currentYear) return total;
+      return total + Number(item.amount);
+    }, 0);
+  }, [allExpenses, currentYear, monthById]);
+
+  const categoryChartData = useMemo(() => {
+    const source = categoryMonthFilterId
+      ? allExpenses.filter((item) => item.month_id === categoryMonthFilterId)
+      : allExpenses;
+    const totals: Record<string, number> = {};
+    source.forEach((item) => {
+      const key = item.category || "Outros";
+      totals[key] = (totals[key] || 0) + Number(item.amount);
+    });
+    return Object.entries(totals).map(([name, value]) => ({ name, value }));
+  }, [allExpenses, categoryMonthFilterId]);
+
+  const currentMonthCategoryData = useMemo(() => {
+    const totals: Record<string, number> = {};
+    expenses.forEach((item) => {
+      const key = item.category || "Outros";
+      totals[key] = (totals[key] || 0) + Number(item.amount);
+    });
+    return Object.entries(totals).map(([name, value]) => ({ name, value }));
+  }, [expenses]);
+
+  const monthlyTotals = useMemo(() => {
+    const totals: Record<string, { income: number; expense: number }> = {};
+
+    allIncomes.forEach((item) => {
+      totals[item.month_id] = totals[item.month_id] || { income: 0, expense: 0 };
+      totals[item.month_id].income += Number(item.amount);
     });
 
-    if (error) {
-      openAlert("Erro ao criar mês.", "error");
-      return;
-    }
+    allExpenses.forEach((item) => {
+      totals[item.month_id] = totals[item.month_id] || { income: 0, expense: 0 };
+      totals[item.month_id].expense += Number(item.amount);
+    });
 
-    setMonthName("");
-    setMonthNumber("");
-    setYear("");
+    return sortedMonthsAsc.map((month) => ({
+      id: month.id,
+      name: month.name,
+      receitas: totals[month.id]?.income || 0,
+      despesas: totals[month.id]?.expense || 0,
+      isFocus: Boolean(comparisonMonthId && month.id === comparisonMonthId),
+    }));
+  }, [allIncomes, allExpenses, sortedMonthsAsc, comparisonMonthId]);
 
-    await refreshMonths();
-    await refreshAllEntries();
-  }
+  const categorySpending = useMemo(() => {
+    const spending: Record<string, number> = {};
 
-  async function handleDeleteMonth(id: string) {
-    const { error } = await supabase.from("months").delete().eq("id", id);
+    allEntries.forEach((item) => {
+      spending[item.category] = (spending[item.category] || 0) + Number(item.amount);
+    });
 
-    if (error) {
-      openAlert("Erro ao deletar mês.", "error");
-      return;
-    }
+    return Object.values(spending);
+  }, [allEntries, categoryOverrides]);
 
-    await refreshMonths();
-    await refreshAllEntries();
-  }
+  const subcategorySpending = useMemo(() => {
+    const spending: Record<string, number> = {};
+
+    allEntries.forEach((item) => {
+      spending[item.category] = (spending[item.category] || 0) + Number(item.amount);
+    });
+
+    return Object.values(spending);
+  }, [allEntries, categoryOverrides]);
 
   async function handleCreateIncome(e: React.FormEvent) {
     e.preventDefault();
@@ -639,9 +514,10 @@ export default function Dashboard() {
       return;
     }
 
-    setExpenseDescription("");
     setExpenseAmount("");
-    setExpenseCategory("Moradia");
+    setExpenseCategory("");
+    setExpenseSubcategory("");
+    setExpenseDescription("");
 
     await refreshEntries(selectedMonthId);
     await refreshAllEntries();
@@ -767,6 +643,104 @@ export default function Dashboard() {
     await refreshAllEntries();
   }
 
+  async function handleResetPassword() {
+    if (!email) {
+      openAlert("Email nao encontrado.", "error");
+      return;
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (error) {
+      openAlert("Erro ao solicitar reset de senha.", "error");
+      return;
+    }
+
+    openAlert("Email de redefinicao enviado.", "success");
+  }
+
+  async function handleSaveProfile() {
+    if (!userId) {
+      openAlert("Usuário não encontrado.", "error");
+      return;
+    }
+
+    setProfileSaving(true);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ full_name: profileName })
+      .eq("id", userId);
+
+    setProfileSaving(false);
+
+    if (error) {
+      openAlert("Erro ao salvar perfil.", "error");
+      return;
+    }
+
+    setProfile((prev: Profile | null) => (prev ? { ...prev, full_name: profileName } : prev));
+    openAlert("Perfil atualizado com sucesso.", "success");
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
+
+  async function handleCreateMonth(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!monthName || !monthNumber || !year) {
+      openAlert("Preencha nome, mes e ano.", "warning");
+      return;
+    }
+
+    if (!userId) {
+      openAlert("Usuário não encontrado.", "error");
+      return;
+    }
+
+    const { error } = await supabase.from("months").insert({
+      user_id: userId,
+      name: monthName,
+      month: Number(monthNumber),
+      year: Number(year),
+    });
+
+    if (error) {
+      openAlert("Erro ao criar mês.", "error");
+      return;
+    }
+
+    setMonthName("");
+    setMonthNumber("");
+    setYear("");
+
+    await refreshMonths();
+  }
+
+  async function handleDeleteMonth(id: string) {
+    openConfirm({
+      title: "Deletar mês",
+      message: "Deseja deletar este mês?",
+      confirmLabel: "Deletar",
+      onConfirm: async () => {
+        const { error } = await supabase
+          .from("months")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", userId);
+
+        if (error) {
+          openAlert("Erro ao deletar mês.", "error");
+          return;
+        }
+
+        await refreshMonths();
+      },
+    });
+  }
+
   async function handleSaveCategory(e: React.FormEvent) {
     e.preventDefault();
 
@@ -845,6 +819,30 @@ export default function Dashboard() {
       },
     });
   }
+
+  const removedFixedIncomeCategories = useMemo(() => {
+    return categoryOverrides
+      .filter((item) => item.type === "income" && item.action === "remove")
+      .map((item) => item.name);
+  }, [categoryOverrides]);
+
+  const removedFixedExpenseCategories = useMemo(() => {
+    return categoryOverrides
+      .filter((item) => item.type === "expense" && item.action === "remove")
+      .map((item) => item.name);
+  }, [categoryOverrides]);
+
+  const fixedIncomeCategories = useMemo(() => {
+    return INCOME_CATEGORIES.filter(
+      (category) => !removedFixedIncomeCategories.includes(category)
+    );
+  }, [removedFixedIncomeCategories]);
+
+  const fixedExpenseCategories = useMemo(() => {
+    return EXPENSE_CATEGORIES.filter(
+      (category) => !removedFixedExpenseCategories.includes(category)
+    );
+  }, [removedFixedExpenseCategories]);
 
   async function removeFixedExpenseCategory(name: string) {
     if (!userId) {
@@ -938,221 +936,39 @@ export default function Dashboard() {
     [expenses]
   );
 
-  const balance = totalIncomes - totalExpenses;
+  const balance = useMemo(() => totalIncomes - totalExpenses, [totalIncomes, totalExpenses]);
 
-  const currentMonthCategoryData = useMemo(() => {
-    const grouped: Record<string, number> = {};
+  const savingsByMonth = useMemo(() => {
+    const savings: Record<string, number> = {};
 
-    expenses.forEach((item) => {
-      grouped[item.category] = (grouped[item.category] || 0) + Number(item.amount);
-    });
-    const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
-
-    return Object.entries(grouped)
-      .map(([name, value]) => ({
-        name,
-        value,
-        percent: total ? (value / total) * 100 : 0,
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [expenses]);
-
-  const sortedMonths = useMemo(() => {
-    return [...months].sort((a, b) => {
-      if (a.year === b.year) {
-        return a.month - b.month;
-      }
-      return a.year - b.year;
-    });
-  }, [months]);
-
-  const sortedMonthsDesc = useMemo(() => {
-    return [...sortedMonths].reverse();
-  }, [sortedMonths]);
-
-  const categoryExpenseSource = useMemo(() => {
-    if (!categoryMonthFilterId) return allExpenses;
-    return allExpenses.filter((item) => item.month_id === categoryMonthFilterId);
-  }, [allExpenses, categoryMonthFilterId]);
-
-  const categoryChartData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-
-    categoryExpenseSource.forEach((item) => {
-      grouped[item.category] = (grouped[item.category] || 0) + Number(item.amount);
-    });
-    const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
-
-    return Object.entries(grouped)
-      .map(([name, value]) => ({
-        name,
-        value,
-        percent: total ? (value / total) * 100 : 0,
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [categoryExpenseSource]);
-
-  const years = useMemo(() => {
-    const uniqueYears = [...new Set(months.map((item) => item.year))];
-    return uniqueYears.sort((a, b) => b - a);
-  }, [months]);
-
-  const filteredMonths = useMemo(() => {
-    if (!monthsYearFilter) return months;
-    return months.filter((item) => String(item.year) === monthsYearFilter);
-  }, [months, monthsYearFilter]);
-
-  const monthlyTotals = useMemo(() => {
-    const totals = new Map<string, { income: number; expense: number }>();
-
-    sortedMonths.forEach((month) => {
-      totals.set(month.id, { income: 0, expense: 0 });
+    savingsEntries.forEach((item) => {
+      savings[item.month_id] = (savings[item.month_id] || 0) + Number(item.saved_amount);
     });
 
-    allIncomes.forEach((item) => {
-      const current = totals.get(item.month_id) || { income: 0, expense: 0 };
-      totals.set(item.month_id, {
-        income: current.income + Number(item.amount),
-        expense: current.expense,
-      });
-    });
+    return Object.values(savings);
+  }, [savingsEntries]);
 
-    allExpenses.forEach((item) => {
-      const current = totals.get(item.month_id) || { income: 0, expense: 0 };
-      totals.set(item.month_id, {
-        income: current.income,
-        expense: current.expense + Number(item.amount),
-      });
-    });
+  const savingsGoalsProgress = useMemo(() => {
+    return savingsGoals.map((goal) => {
+      const saved = savingsEntries
+        .filter((e) => e.goal_id === goal.id)
+        .reduce(
+          (acc, e) => acc + e.saved_amount - e.withdrawn_amount,
+          0
+        );
 
-    return sortedMonths.map((month) => {
-      const total = totals.get(month.id) || { income: 0, expense: 0 };
+      const progress = goal.target_amount
+        ? (saved / goal.target_amount) * 100
+        : 0;
+
       return {
-        id: month.id,
-        name: month.name,
-        receitas: total.income,
-        despesas: total.expense,
-        isFocus: comparisonMonthId
-          ? month.id === comparisonMonthId
-          : month.id === selectedMonthId,
+        name: goal.name,
+        saved,
+        target: goal.target_amount,
+        progress,
       };
     });
-  }, [allExpenses, allIncomes, comparisonMonthId, selectedMonthId, sortedMonths]);
-
-  const currentYear = new Date().getFullYear();
-  const annualIncome = useMemo(() => {
-    const monthIds = new Set(
-      months.filter((item) => item.year === currentYear).map((item) => item.id)
-    );
-    return allIncomes
-      .filter((item) => monthIds.has(item.month_id))
-      .reduce((total, item) => total + Number(item.amount), 0);
-  }, [allIncomes, currentYear, months]);
-
-  const annualExpenses = useMemo(() => {
-    const monthIds = new Set(
-      months.filter((item) => item.year === currentYear).map((item) => item.id)
-    );
-    return allExpenses
-      .filter((item) => monthIds.has(item.month_id))
-      .reduce((total, item) => total + Number(item.amount), 0);
-  }, [allExpenses, currentYear, months]);
-
-  const monthlyTotalsMap = useMemo(() => {
-    return new Map(monthlyTotals.map((item) => [item.id, item]));
-  }, [monthlyTotals]);
-
-  const previousMonthTotals = useMemo(() => {
-    const selectedMonth = months.find((item) => item.id === selectedMonthId);
-
-    if (!selectedMonth) return null;
-
-    const previousMonth = selectedMonth.month === 1 ? 12 : selectedMonth.month - 1;
-    const previousYear = selectedMonth.month === 1 ? selectedMonth.year - 1 : selectedMonth.year;
-    const previousEntry = months.find(
-      (item) => item.month === previousMonth && item.year === previousYear
-    );
-
-    if (!previousEntry) return null;
-
-    return monthlyTotalsMap.get(previousEntry.id) || null;
-  }, [months, monthlyTotalsMap, selectedMonthId]);
-
-  const paymentMethodData = useMemo(() => {
-    const grouped: Record<string, number> = {};
-
-    expenses.forEach((item) => {
-      const method = item.payment_method || "Outros";
-      grouped[method] = (grouped[method] || 0) + Number(item.amount);
-    });
-
-    const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
-
-    return Object.entries(grouped)
-      .map(([name, value]) => ({
-        name,
-        value,
-        percent: total ? (value / total) * 100 : 0,
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [expenses]);
-
-  const upcomingExpenses = useMemo(() => {
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-    return allExpenses
-      .filter((item) => item.due_date)
-      .map((item) => ({
-        ...item,
-        dueDateValue: new Date(item.due_date as string),
-      }))
-      .filter((item) => item.dueDateValue >= todayStart)
-      .sort((a, b) => a.dueDateValue.getTime() - b.dueDateValue.getTime())
-      .slice(0, 5);
-  }, [allExpenses]);
-
-  const savingsTotalsByGoal = useMemo(() => {
-    const totals: Record<string, { balance: number }> = {};
-
-    savingsGoals.forEach((goal) => {
-      totals[goal.id] = { balance: 0 };
-    });
-
-    savingsEntries.forEach((entry) => {
-      const current = totals[entry.goal_id] || { balance: 0 };
-      const balance =
-        current.balance + entry.saved_amount - entry.withdrawn_amount + entry.earned_amount;
-      totals[entry.goal_id] = { balance };
-    });
-
-    return totals;
-  }, [savingsEntries, savingsGoals]);
-
-  const totalSaved = useMemo(() => {
-    return Object.values(savingsTotalsByGoal).reduce(
-      (sum, item) => sum + item.balance,
-      0
-    );
-  }, [savingsTotalsByGoal]);
-
-  const topSavingsGoal = useMemo(() => {
-    const goalsWithTarget = savingsGoals.filter(
-      (goal) => goal.target_amount && goal.target_amount > 0
-    );
-
-    if (goalsWithTarget.length === 0) return null;
-
-    return goalsWithTarget
-      .map((goal) => {
-        const balance = savingsTotalsByGoal[goal.id]?.balance || 0;
-        const percent = goal.target_amount
-          ? (balance / goal.target_amount) * 100
-          : 0;
-        return { goal, balance, percent };
-      })
-      .sort((a, b) => b.percent - a.percent)[0];
-  }, [savingsGoals, savingsTotalsByGoal]);
+  }, [savingsGoals, savingsEntries]);
 
   if (loading) {
     return (
@@ -1167,8 +983,11 @@ export default function Dashboard() {
     const monthLabel = selectedMonth?.name || "Nenhum mês cadastrado";
     const hideValues = preferences.hideValues;
     const tooltipFormatter = (value: number) => formatCurrency(value, hideValues);
-    const pieLabel = ({ name, value }: { name: string; value: number }) =>
-      hideValues ? name : `${name}: ${formatCurrency(value, false)}`;
+    const pieLabel = ({ name, value }: PieLabelRenderProps) => {
+      const safeName = name || "";
+      const safeValue = typeof value === "number" ? value : 0;
+      return hideValues ? safeName : `${safeName}: ${formatCurrency(safeValue, false)}`;
+    };
 
     return (
       <div className="grid gap-6">
@@ -1348,8 +1167,11 @@ export default function Dashboard() {
   function renderDashboardHome() {
     const hideValues = preferences.hideValues;
     const tooltipFormatter = (value: number) => formatCurrency(value, hideValues);
-    const pieLabel = ({ name, value }: { name: string; value: number }) =>
-      hideValues ? name : `${name}: ${formatCurrency(value, false)}`;
+    const pieLabel = ({ name, value }: PieLabelRenderProps) => {
+      const safeName = name || "";
+      const safeValue = typeof value === "number" ? value : 0;
+      return hideValues ? safeName : `${safeName}: ${formatCurrency(safeValue, false)}`;
+    };
 
     return (
       <div className="grid gap-6">
@@ -1945,92 +1767,6 @@ export default function Dashboard() {
             <h3 className="mt-2 text-2xl font-bold text-cyan-400">
               {formatCurrency(0, hideValues)}
             </h3>
-          </div>
-        </section>
-
-        <section className="grid gap-6 xl:grid-cols-2">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-            <h2 className="mb-4 text-xl font-semibold">Nova receita</h2>
-
-            <form onSubmit={handleCreateIncome} className="grid gap-4">
-              <input
-                type="text"
-                placeholder="Descrição"
-                className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
-                value={incomeDescription}
-                onChange={(e) => setIncomeDescription(e.target.value)}
-              />
-
-              <input
-                type="number"
-                step="0.01"
-                placeholder="Valor"
-                className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
-                value={incomeAmount}
-                onChange={(e) => setIncomeAmount(e.target.value)}
-              />
-
-              <select
-                className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
-                value={incomeCategory}
-                onChange={(e) => setIncomeCategory(e.target.value)}
-              >
-                {incomeCategories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="submit"
-                className="rounded-xl bg-emerald-400 px-4 py-3 font-medium text-slate-950"
-              >
-                Adicionar receita
-              </button>
-            </form>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-            <h2 className="mb-4 text-xl font-semibold">Nova despesa</h2>
-
-            <form onSubmit={handleCreateExpense} className="grid gap-4">
-              <input
-                type="text"
-                placeholder="Descrição"
-                className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
-                value={expenseDescription}
-                onChange={(e) => setExpenseDescription(e.target.value)}
-              />
-
-              <input
-                type="number"
-                step="0.01"
-                placeholder="Valor"
-                className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
-                value={expenseAmount}
-                onChange={(e) => setExpenseAmount(e.target.value)}
-              />
-
-              <select
-                className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-white outline-none"
-                value={expenseCategory}
-                onChange={(e) => setExpenseCategory(e.target.value)}
-              >
-                {expenseCategories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="submit"
-                className="rounded-xl bg-rose-400 px-4 py-3 font-medium text-slate-950"
-              >
-                Adicionar despesa
-              </button>
-            </form>
           </div>
         </section>
 
