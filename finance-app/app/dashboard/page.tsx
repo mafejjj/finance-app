@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CenterModal } from "@/components/center-modal";
@@ -54,7 +54,7 @@ type ModalState = {
   onConfirm?: () => void | Promise<void>;
 };
 
-export default function Dashboard() {
+function DashboardContent() {
   const searchParams = useSearchParams();
   const currentView = searchParams.get("view") || "home";
 
@@ -2314,5 +2314,19 @@ export default function Dashboard() {
         onClose={() => setModal(null)}
       />
     </>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+          <p>Carregando...</p>
+        </main>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
   );
 }

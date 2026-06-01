@@ -23,21 +23,26 @@ const defaultPreferences: Preferences = {
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
-function normalizePreferences(value: Preferences) {
+function normalizePreferences(value: Partial<Preferences>): Preferences {
   return {
-    ...value,
     theme: value.theme === "light" ? "light" : "dark",
+    hideValues: Boolean(value.hideValues),
+    menuCollapsed: Boolean(value.menuCollapsed),
   };
 }
 
 export function PreferencesProvider({ children }: { children: React.ReactNode }) {
   const [preferences, setPreferences] = useState<Preferences>(defaultPreferences);
+  const [loading, setLoading] = useState(true);
 
   const loadPreferences = useCallback(async () => {
     const { data } = await supabase.from("user_preferences").select("preferences").single();
+
     if (data && data.preferences) {
-      setPreferences(data.preferences as Preferences);
+      setPreferences(normalizePreferences(data.preferences as Preferences));
     }
+
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -46,7 +51,7 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
 
   const updatePreferences = useCallback(
     async (newPrefs: Partial<Preferences>) => {
-      const updated = { ...preferences, ...newPrefs };
+      const updated = normalizePreferences({ ...preferences, ...newPrefs });
       setPreferences(updated);
       await supabase.from("user_preferences").upsert({ id: 1, preferences: updated });
     },
@@ -57,8 +62,9 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     () => ({
       preferences,
       updatePreferences,
+      loading,
     }),
-    [preferences, updatePreferences]
+    [preferences, updatePreferences, loading]
   );
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
