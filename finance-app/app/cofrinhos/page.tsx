@@ -255,6 +255,10 @@ export default function CofrinhosPage() {
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {goals.map((goal) => {
                   const goalTotals = totalsByGoal[goal.id];
+                  const balance = goalTotals?.balance || 0;
+                  const percentage = goal.target_amount && goal.target_amount > 0
+                    ? Math.min((balance / goal.target_amount) * 100, 100)
+                    : 0;
 
                   return (
                     <Link
@@ -270,14 +274,29 @@ export default function CofrinhosPage() {
                           {goal.name}
                         </h3>
                         <p className="mt-2 text-sm text-slate-400">
-                          Meta: {goal.target_amount ? formatCurrency(goal.target_amount, hideValues) : "Nao definida"}
+                          Meta: {goal.target_amount ? formatCurrency(goal.target_amount, hideValues) : "Não definida"}
                         </p>
                       </div>
+
+                      {goal.target_amount && goal.target_amount > 0 && (
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between text-xs text-slate-400">
+                            <span>{hideValues ? "••••" : `${percentage.toFixed(0)}%`}</span>
+                            <span>{formatCurrency(goal.target_amount, hideValues)}</span>
+                          </div>
+                          <div className="mt-1 h-3 w-full overflow-hidden rounded-full bg-slate-800">
+                            <div
+                              className="h-full rounded-full bg-cyan-400 transition-all"
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
 
                       <div className="mt-4">
                         <p className="text-xs text-slate-400">Total bruto</p>
                         <p className="text-xl font-semibold text-emerald-400">
-                          {formatCurrency(goalTotals?.balance || 0, hideValues)}
+                          {formatCurrency(balance, hideValues)}
                         </p>
                         <p className="mt-2 text-xs text-slate-500">
                           Clique para abrir

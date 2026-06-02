@@ -38,15 +38,30 @@ export default function Cadastro() {
       return;
     }
 
+    const trimmedEmail = email.trim().toLowerCase();
+
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: trimmedEmail,
       password,
+      options: {
+        data: {
+          full_name: fullName,
+        },
+      },
     });
 
     if (error) {
+      let msg = "Erro ao cadastrar.";
+      if (error.message.includes("already registered")) {
+        msg = "Este e-mail já está cadastrado.";
+      } else if (error.message.includes("disabled")) {
+        msg = "Cadastro de novos usuários está desabilitado.";
+      } else if (error.message) {
+        msg = error.message;
+      }
       setModal({
         title: "Erro",
-        message: "Erro ao cadastrar",
+        message: msg,
         intent: "error",
       });
       return;

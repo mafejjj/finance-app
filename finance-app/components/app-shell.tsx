@@ -115,6 +115,30 @@ const menuGroups: Array<{ title: string; items: MenuItem[] }> = [
           </svg>
         ),
       },
+      {
+        label: "Calendário financeiro",
+        view: "calendar",
+        icon: (
+          <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+            <path
+              d="M7 2h2v2h6V2h2v2h3a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3V2ZM5 9v10h14V9H5Zm2 2h2v2H7v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-8 4h2v2H7v-2Zm4 0h2v2h-2v-2Z"
+              fill="currentColor"
+            />
+          </svg>
+        ),
+      },
+      {
+        label: "Parcelamentos",
+        view: "installments",
+        icon: (
+          <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+            <path
+              d="M2 5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4H2V5Zm0 6h20v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8Zm4 2v2h4v-2H6Zm6 0v2h6v-2h-6Z"
+              fill="currentColor"
+            />
+          </svg>
+        ),
+      },
     ],
   },
   {
@@ -169,7 +193,7 @@ export function AppShell({ title, children }: AppShellProps) {
     <main className="min-h-screen bg-slate-950 text-white">
       <div className="flex min-h-screen">
         <aside
-          className={`group/sidebar flex flex-col overflow-hidden border-r border-slate-800 bg-slate-900/90 p-4 transition-all duration-300 ease-out ${
+          className={`group/sidebar sticky top-0 flex h-screen flex-col overflow-y-auto overflow-x-hidden scrollbar-none border-r border-slate-800 bg-slate-900/90 p-4 transition-all duration-300 ease-out [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] ${
             isCollapsed ? "w-20 hover:w-72" : "w-72"
           }`}
         >
